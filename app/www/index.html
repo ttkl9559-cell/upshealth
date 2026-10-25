@@ -1,0 +1,1463 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="auto" data-accent="black">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta http-equiv="Cache-Control" content="no-cache,no-store,must-revalidate">
+<title>UPS 健康</title>
+<style>
+/* =====================================================================
+   DESIGN TOKENS —— 与 fnmonitor 一致
+   ===================================================================== */
+:root{
+  --font-sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","HarmonyOS Sans SC","MiSans","Microsoft YaHei UI",system-ui,sans-serif;
+  --font-display:"SF Pro Display",-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","MiSans",system-ui,sans-serif;
+  --font-mono:"SF Mono","JetBrains Mono","Cascadia Code",ui-monospace,Menlo,Consolas,monospace;
+  --fs-hero:56px;--fs-display:34px;--fs-h2:24px;--fs-h3:17px;--fs-body:15px;--fs-sm:13px;--fs-xs:12px;
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:20px;--s6:24px;--s7:32px;--s8:40px;
+  --r-xs:6px;--r-sm:10px;--r-md:14px;--r-lg:26px;--r-pill:999px;
+  --ease:cubic-bezier(.22,.8,.24,1);--ease-sheet:cubic-bezier(.32,.72,0,1);
+  --dur-1:140ms;--dur-2:260ms;--dur-3:480ms;
+  --side-w:212px;
+}
+:root,[data-theme="light"]{
+  color-scheme:light;
+  --bg:#ECECEA;--bg-dot:rgba(14,14,14,.075);--bg-bar:rgba(236,236,234,.86);
+  --card:#FFFFFF;--card-sunk:#F3F3F1;--card-hover:#FFFFFF;
+  --fill-1:rgba(14,14,14,.045);--fill-2:rgba(14,14,14,.08);--fill-3:rgba(14,14,14,.15);
+  --line:rgba(14,14,14,.08);--line-strong:rgba(14,14,14,.14);
+  --ink-1:#0E0E0E;--ink-2:#6B6B6B;--ink-3:#A9A9A6;--ink-inv:#FFFFFF;
+  --off:rgba(14,14,14,.075);--scrim:rgba(14,14,14,.26);
+  --accent:#0E0E0E;--d-p:#3A3A38;
+  --accent-soft:rgba(14,14,14,.06);--accent-ring:rgba(14,14,14,.4);--on-accent:#FFF;
+  --ok:#128A4E;--warn:#CE5600;--warn-fill:#FA8233;--crit:#C2272D;--sleep:#7A8294;
+  --ok-soft:rgba(18,138,78,.1);--warn-soft:rgba(250,130,51,.13);--crit-soft:rgba(194,39,45,.1);
+  --shadow-pop:0 18px 50px -12px rgba(0,0,0,.25),0 2px 6px rgba(0,0,0,.07);
+}
+[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#000000;--bg-dot:rgba(255,255,255,.055);--bg-bar:rgba(0,0,0,.82);
+  --card:#161616;--card-sunk:#1F1F1F;--card-hover:#1A1A1A;
+  --fill-1:rgba(255,255,255,.055);--fill-2:rgba(255,255,255,.09);--fill-3:rgba(255,255,255,.17);
+  --line:rgba(255,255,255,.08);--line-strong:rgba(255,255,255,.14);
+  --ink-1:#F2F2F0;--ink-2:#92928F;--ink-3:#64645F;--ink-inv:#0E0E0E;
+  --off:rgba(255,255,255,.08);--scrim:rgba(0,0,0,.6);
+  --accent:#F2F2F0;--d-p:#D6D6D2;
+  --accent-soft:rgba(242,242,240,.08);--accent-ring:rgba(242,242,240,.4);--on-accent:#0E0E0E;
+  --ok:#3BC47B;--warn:#FF8F49;--warn-fill:#FF8F49;--crit:#E54C4A;--sleep:#8C93A3;
+  --ok-soft:rgba(59,196,123,.14);--warn-soft:rgba(255,143,73,.15);--crit-soft:rgba(229,76,74,.15);
+  --shadow-pop:0 18px 50px -12px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.07);
+}
+@media(prefers-color-scheme:dark){
+  [data-theme="auto"]{
+    color-scheme:dark;
+    --bg:#000000;--bg-dot:rgba(255,255,255,.055);--bg-bar:rgba(0,0,0,.82);
+    --card:#161616;--card-sunk:#1F1F1F;--card-hover:#1A1A1A;
+    --fill-1:rgba(255,255,255,.055);--fill-2:rgba(255,255,255,.09);--fill-3:rgba(255,255,255,.17);
+    --line:rgba(255,255,255,.08);--line-strong:rgba(255,255,255,.14);
+    --ink-1:#F2F2F0;--ink-2:#92928F;--ink-3:#64645F;--ink-inv:#0E0E0E;
+    --off:rgba(255,255,255,.08);--scrim:rgba(0,0,0,.6);
+    --accent:#F2F2F0;--d-p:#D6D6D2;
+    --accent-soft:rgba(242,242,240,.08);--accent-ring:rgba(242,242,240,.4);--on-accent:#0E0E0E;
+    --ok:#3BC47B;--warn:#FF8F49;--warn-fill:#FF8F49;--crit:#E54C4A;--sleep:#8C93A3;
+    --ok-soft:rgba(59,196,123,.14);--warn-soft:rgba(255,143,73,.15);--crit-soft:rgba(229,76,74,.15);
+    --shadow-pop:0 18px 50px -12px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.07);
+  }
+}
+/* 主色（data-accent） */
+[data-accent="blue"]{--accent:#2B50C0;--on-accent:#FFF}
+[data-theme="dark"][data-accent="blue"]{--accent:#7896F4;--on-accent:#0E0E0E}
+[data-accent="green"]{--accent:#0B9B61;--on-accent:#FFF}
+[data-theme="dark"][data-accent="green"]{--accent:#2BB98A;--on-accent:#0E0E0E}
+[data-accent="cyan"]{--accent:#0098B0;--on-accent:#FFF}
+[data-theme="dark"][data-accent="cyan"]{--accent:#22B5CC;--on-accent:#0E0E0E}
+[data-accent="yellow"]{--accent:#C98A00;--on-accent:#0E0E0E}
+[data-theme="dark"][data-accent="yellow"]{--accent:#E2A646;--on-accent:#0E0E0E}
+
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{-webkit-text-size-adjust:100%;overflow-x:hidden}
+body{
+  margin:0;background:var(--bg);color:var(--ink-1);
+  font:var(--fs-body)/1.6 var(--font-sans);
+  background-image:radial-gradient(var(--bg-dot) 1px,transparent 1px);
+  background-size:22px 22px;background-attachment:fixed;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+a{color:inherit;text-decoration:none}
+::selection{background:var(--accent);color:var(--on-accent)}
+
+/* ---------- 布局 ---------- */
+.app{display:grid;grid-template-columns:var(--side-w) minmax(0,1fr);min-height:100vh}
+.side{position:sticky;top:0;height:100vh;padding:20px 12px 20px 16px;display:flex;flex-direction:column;gap:2px}
+.brand{display:flex;align-items:center;gap:10px;padding:6px 10px 22px}
+.brand .logo{width:30px;height:30px;border-radius:9px;background:var(--accent);color:var(--on-accent);
+  display:grid;place-items:center;font:700 13px/1 var(--font-display);flex:0 0 auto}
+.brand .nm{font:650 15.5px/1.2 var(--font-display);letter-spacing:-.01em}
+.brand .sub{font:500 10px/1 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin-top:3px}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--r-sm);
+  font-size:14px;color:var(--ink-2);transition:background var(--dur-1) var(--ease),color var(--dur-1)}
+.nav-item:hover{background:var(--fill-1);color:var(--ink-1)}
+.nav-item.on{background:var(--card);color:var(--ink-1);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.nav-item .ic{width:17px;height:17px;flex:0 0 auto;opacity:.75}
+.nav-item.on .ic{opacity:1}
+.side-foot{margin-top:auto;padding:10px 12px;font:500 11px/1.5 var(--font-mono);color:var(--ink-3)}
+.side-foot .dotline{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+
+.main{padding:18px 26px 60px;min-width:0}
+.topbar{display:flex;align-items:center;gap:12px;justify-content:flex-end;margin-bottom:16px;min-height:34px}
+.tb-btn{width:34px;height:34px;border-radius:var(--r-sm);display:grid;place-items:center;
+  color:var(--ink-2);transition:background var(--dur-1),color var(--dur-1)}
+.tb-btn:hover{background:var(--fill-1);color:var(--ink-1)}
+.tb-btn svg{width:17px;height:17px}
+.live-pill{display:inline-flex;align-items:center;gap:7px;padding:7px 12px;border-radius:var(--r-pill);
+  background:var(--card);font:600 12px/1 var(--font-sans);color:var(--ink-2)}
+.live-pill .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.live-pill.bad .dot{background:var(--crit);box-shadow:0 0 0 3px var(--crit-soft)}
+.live-pill.stale .dot{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}
+
+.card{background:var(--card);border-radius:var(--r-lg);padding:22px;min-width:0}
+.card.tight{padding:18px}
+.grid{display:grid;gap:13px}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+
+/* ---------- 点阵数字 ---------- */
+.dnum{display:inline-flex;align-items:flex-end;gap:calc(var(--dm-h)*.16);white-space:nowrap;line-height:1;min-width:0}
+.dnum>.v{font:650 var(--dm-h)/.92 var(--font-display);letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.dnum>.unit{font:600 max(11px,calc(var(--dm-h)*.3))/1 var(--font-sans);color:var(--ink-2);margin-bottom:2px}
+.dnum.na>.v{color:var(--ink-3)}
+.kicker{font:500 10.5px/1 var(--font-mono);letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3)}
+
+/* ---------- Hero ---------- */
+.hero{background:var(--card);border-radius:var(--r-lg);padding:24px 26px;display:grid;
+  grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:end}
+.hero-l{min-width:0}
+.hero-tags{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px}
+.hero-r{text-align:right;display:flex;flex-direction:column;gap:16px;align-items:flex-end}
+.hero-sub{font:500 12px/1.6 var(--font-mono);color:var(--ink-3)}
+.hero-dev{font-size:12.5px;color:var(--ink-2);margin-top:10px;display:flex;gap:10px;flex-wrap:wrap}
+.hero-dev span{display:inline-flex;align-items:center;gap:5px}
+.hero-dev b{font-weight:600;color:var(--ink-1)}
+
+.tag{display:inline-flex;align-items:center;gap:5px;font:600 11.5px/1 var(--font-sans);
+  padding:6px 10px;border-radius:var(--r-pill);background:var(--fill-2);color:var(--ink-2);white-space:nowrap}
+.tag.ok{background:var(--ok-soft);color:var(--ok)}
+.tag.warn{background:var(--warn-soft);color:var(--warn)}
+.tag.crit{background:var(--crit-soft);color:var(--crit)}
+.tag.acc{background:var(--accent-soft);color:var(--ink-1)}
+.tag.mono{font:600 11px/1 var(--font-mono);letter-spacing:.04em}
+
+/* ---------- 指标卡 ---------- */
+.metric{background:var(--card);border-radius:var(--r-lg);padding:17px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.metric .mv{display:flex;align-items:flex-end;gap:6px;justify-content:space-between}
+.metric .lbl{font-size:12.5px;color:var(--ink-2);display:flex;align-items:center;gap:6px}
+.metric .sub{font:500 11px/1.4 var(--font-mono);color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar{height:5px;border-radius:3px;background:var(--fill-2);overflow:hidden}
+.bar>i{display:block;height:100%;border-radius:3px;background:var(--ink-1);width:0;
+  transition:width var(--dur-3) var(--ease),background var(--dur-2)}
+.bar>i.w{background:var(--warn-fill)}
+.bar>i.c{background:var(--crit)}
+.bar>i.ok{background:var(--ok)}
+.metric.warn .mv .v{color:var(--warn)}
+.metric.crit .mv .v{color:var(--crit)}
+
+/* ---------- 图表 ---------- */
+.chart-card{background:var(--card);border-radius:var(--r-lg);padding:20px 22px 14px}
+.chart-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+.chart-title{font:600 15px/1.3 var(--font-display);letter-spacing:-.01em}
+.seg{display:inline-flex;flex-wrap:wrap;background:var(--fill-1);border-radius:var(--r-pill);padding:3px;gap:2px;position:relative;max-width:100%}
+.seg button{font:600 12px/1 var(--font-sans);padding:6px 12px;border-radius:var(--r-pill);color:var(--ink-2);white-space:nowrap}
+.seg button.on{background:var(--card);color:var(--ink-1);box-shadow:0 1px 3px rgba(0,0,0,.07)}
+.chart-wrap{position:relative;margin-top:8px}
+.chart-wrap svg{display:block;width:100%;overflow:visible}
+.chart-tip{position:absolute;pointer-events:none;background:var(--card);border:.5px solid var(--line-strong);
+  border-radius:var(--r-sm);padding:7px 10px;font:600 12px/1.5 var(--font-sans);box-shadow:var(--shadow-pop);
+  opacity:0;transition:opacity var(--dur-1);white-space:nowrap;z-index:5}
+.chart-tip.on{opacity:1}
+.chart-empty{padding:40px 0;text-align:center;color:var(--ink-3);font-size:13px}
+
+/* ---------- 事件 ---------- */
+.ev-list{display:flex;flex-direction:column}
+.ev{display:grid;grid-template-columns:auto 1fr auto;gap:12px;padding:12px 0;border-bottom:.5px solid var(--line);align-items:start}
+.ev:last-child{border-bottom:none}
+.ev-ic{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;flex:0 0 auto;background:var(--fill-2);margin-top:1px}
+.ev-ic svg{width:14px;height:14px}
+.ev-ic.crit{background:var(--crit-soft);color:var(--crit)}
+.ev-ic.warn{background:var(--warn-soft);color:var(--warn)}
+.ev-ic.ok{background:var(--ok-soft);color:var(--ok)}
+.ev-ic.mute{background:var(--fill-1);color:var(--ink-3)}
+.ev-b{min-width:0}
+.ev-t{font-weight:600;font-size:13.5px;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.ev-n{font-size:12.5px;color:var(--ink-2);margin-top:2px;line-height:1.5}
+.ev-time{font:500 11px/1.4 var(--font-mono);color:var(--ink-3);text-align:right;white-space:nowrap}
+
+/* ---------- 变量表 ---------- */
+.var-search{display:flex;align-items:center;gap:8px;background:var(--card);border-radius:var(--r-pill);
+  padding:9px 16px;margin-bottom:13px}
+.var-search input{border:0;background:none;outline:none;font:inherit;color:var(--ink-1);width:100%;min-width:0}
+.var-search svg{width:15px;height:15px;color:var(--ink-3);flex:0 0 auto}
+.vgroup{background:var(--card);border-radius:var(--r-lg);padding:18px 20px;margin-bottom:12px}
+.vgroup-h{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.vgroup-h .nm{font:600 14px/1 var(--font-display)}
+.vrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;padding:9px 0;border-bottom:.5px solid var(--line);
+  align-items:baseline}
+.vrow:last-child{border-bottom:none}
+.vk{min-width:0}
+.vk .cn{font-size:13.5px;font-weight:500}
+.vk .key{font:11px/1.4 var(--font-mono);color:var(--ink-3);margin-top:1px;word-break:break-all}
+.vnote{font-size:11.5px;line-height:1.55;color:var(--ink-3);margin-top:4px;max-width:64ch}
+.stat-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin-bottom:13px}
+.stat-cell{background:var(--card);border-radius:var(--r-lg);padding:16px 18px}
+.stat-cell .sv{font:650 26px/1.1 var(--font-display);letter-spacing:-.02em;margin-top:7px;font-variant-numeric:tabular-nums}
+@media(max-width:760px){.stat-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.vv{font:600 13.5px/1.3 var(--font-mono);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.vv .u{font-size:11px;color:var(--ink-3);font-weight:500;margin-left:3px}
+.vv.miss{color:var(--ink-3);font-weight:500}
+
+/* ---------- 设置抽屉 ---------- */
+.sheet{position:fixed;z-index:61;top:10px;right:10px;bottom:10px;width:min(600px,calc(100vw - 20px));
+  background:var(--bg);border-radius:var(--r-lg);box-shadow:var(--shadow-pop);
+  transform:translateX(calc(100% + 24px));transition:transform var(--dur-3) var(--ease-sheet),visibility 0s linear var(--dur-3);
+  display:flex;flex-direction:column;overflow:hidden;visibility:hidden;contain:layout paint;max-width:100vw}
+.sheet.on{transform:none;visibility:visible;transition:transform var(--dur-3) var(--ease-sheet),visibility 0s}
+.sheet-head{display:flex;align-items:center;gap:12px;padding:20px 22px 14px}
+.sheet-title{font:650 19px/1.25 var(--font-display);letter-spacing:-.02em;flex:1}
+.sheet-body{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:0 22px 40px}
+.sheet-body>*+*{margin-top:13px}
+.sheet-sec{font:500 10.5px/1.2 var(--font-mono);letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-3);margin:22px 0 -4px}
+.scrim{position:fixed;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity var(--dur-2);z-index:60}
+.scrim.on{opacity:1;pointer-events:auto}
+
+.field{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 0;border-bottom:.5px solid var(--line)}
+.field:last-child{border-bottom:none}
+.field-l{min-width:0}
+.field-l .nm{font-size:13.5px;font-weight:500}
+.field-l .hint{font-size:12px;color:var(--ink-3);margin-top:2px;line-height:1.5}
+.field input[type=number],.field input[type=text],.field select{
+  font:600 13px/1 var(--font-mono);padding:8px 11px;border-radius:var(--r-sm);
+  border:.5px solid var(--line-strong);background:var(--card);color:var(--ink-1);outline:none;width:118px;text-align:right}
+.field input:focus,.field select:focus{border-color:var(--accent-ring)}
+.field input.wide{width:190px;text-align:left}
+.sw{width:44px;height:26px;border-radius:var(--r-pill);background:var(--fill-3);position:relative;transition:background var(--dur-2);flex:0 0 auto}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
+  background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.2);transition:transform var(--dur-2) var(--ease)}
+.sw.on{background:var(--ok)}
+.sw.on::after{transform:translateX(18px)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;font:600 13px/1 var(--font-sans);
+  padding:10px 16px;border-radius:var(--r-pill);background:var(--fill-2);color:var(--ink-1);
+  transition:background var(--dur-1),opacity var(--dur-1)}
+.btn:hover{background:var(--fill-3)}
+.btn.pri{background:var(--accent);color:var(--on-accent)}
+.btn.pri:hover{opacity:.88}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.sm{padding:7px 13px;font-size:12px}
+
+/* ---------- 提示 ---------- */
+.banner{border-radius:var(--r-md);padding:14px 16px;display:flex;gap:11px;align-items:flex-start;font-size:13px}
+.banner.crit{background:var(--crit-soft);color:var(--crit)}
+.banner.warn{background:var(--warn-soft);color:var(--warn)}
+.banner.ok{background:var(--ok-soft);color:var(--ok)}
+.banner.info{background:var(--fill-1);color:var(--ink-2)}
+.banner svg{width:16px;height:16px;flex:0 0 auto;margin-top:1px}
+.banner .bt{font-weight:650;margin-bottom:2px}
+.banner .bd{line-height:1.55}
+.banner code{font:11.5px/1.4 var(--font-mono);background:rgba(128,128,128,.14);padding:1px 5px;border-radius:4px;word-break:break-all}
+
+.toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,20px);opacity:0;pointer-events:none;
+  background:var(--ink-1);color:var(--bg);padding:12px 20px;border-radius:var(--r-pill);
+  font:600 13px/1 var(--font-sans);z-index:90;transition:opacity var(--dur-2),transform var(--dur-2) var(--ease);max-width:88vw;text-align:center}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+
+.bottom-nav{display:none}
+.empty{padding:52px 20px;text-align:center;color:var(--ink-3)}
+.empty .et{font:650 16px/1.3 var(--font-display);color:var(--ink-2);margin-bottom:6px}
+.empty .ed{font-size:13px;line-height:1.6;max-width:46ch;margin:0 auto}
+
+.page{display:none}
+.page.on{display:block}
+.mono-sm{font:500 11.5px/1.5 var(--font-mono);color:var(--ink-3)}
+
+/* ---------- 响应式 ---------- */
+@media(max-width:1080px){.g4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:880px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  .side{display:none}
+  .main{padding:14px 14px 88px}
+  .hero{grid-template-columns:minmax(0,1fr);gap:16px}
+  .hero-r{text-align:left;align-items:flex-start;flex-direction:column;gap:14px}
+  .hero-r>div{width:100%}
+  .hero-r .kicker,.hero-r .dnum{text-align:left}
+  .g3,.g2{grid-template-columns:minmax(0,1fr)}
+  .bottom-nav{display:flex;position:fixed;left:10px;right:10px;bottom:10px;z-index:50;
+    background:var(--bg-bar);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border-radius:var(--r-pill);padding:7px;box-shadow:var(--shadow-pop);border:.5px solid var(--line)}
+  .bottom-nav button{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;
+    padding:7px 4px;border-radius:var(--r-pill);font:600 10.5px/1 var(--font-sans);color:var(--ink-3)}
+  .bottom-nav button.on{color:var(--ink-1);background:var(--card)}
+  .bottom-nav svg{width:18px;height:18px}
+  .side-foot{display:none}
+  .chart-card{padding:16px 14px 10px}
+  .chart-head{gap:9px}
+  .seg button{padding:6px 10px;font-size:11.5px}
+  /* 窄屏下让筛选组占满整行并允许内部换行，避免撑破视口 */
+  .chart-head>div{width:100%;min-width:0}
+  .seg{width:100%}
+  .metric .sub,.hero-sub{min-width:0;max-width:100%}
+  .hero-dev span{min-width:0}
+}
+@media(max-width:520px){
+  .g4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .hero{padding:18px}
+  .dnum.hero-num{--dm-h:44px!important}
+  #heroChg{--dm-h:44px!important}
+  .seg button{padding:5px 9px;font-size:11px}
+  .metric{padding:14px 15px}
+  .metric .dnum{--dm-h:21px!important}
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"/><path d="M20.5 4v5h-5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 8.5v5"/><circle cx="12" cy="17" r=".6" fill="currentColor"/><path d="M10.3 3.9 2.5 17.4A2 2 0 0 0 4.2 20.5h15.6a2 2 0 0 0 1.7-3.1L13.7 3.9a2 2 0 0 0-3.4 0Z"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5"/><path d="M6.5 8h11v3.5a5.5 5.5 0 0 1-11 0V8Z"/><path d="M12 17v4"/></symbol>
+  <symbol id="i-batt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="7.5" width="16" height="9" rx="2.5"/><path d="M21 11v2"/><path d="M5.5 10.5h4v3h-4z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 12.5 5 5 10-11"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M4 20h16"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/></symbol>
+</svg>
+
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="logo">UP</div>
+      <div>
+        <div class="nm">UPS 健康</div>
+        <div class="sub">upshealth</div>
+      </div>
+    </div>
+    <nav class="nav" id="nav">
+      <button class="nav-item on" data-page="overview"><svg class="ic"><use href="#i-home"/></svg>总览</button>
+      <button class="nav-item" data-page="events"><svg class="ic"><use href="#i-clock"/></svg>事件</button>
+      <button class="nav-item" data-page="vars"><svg class="ic"><use href="#i-list"/></svg>变量</button>
+    </nav>
+    <div class="side-foot">
+      <div class="dotline"><span id="sideDot" style="width:6px;height:6px;border-radius:50%;background:var(--ok);display:inline-block"></span><span id="sideStatus">连接中</span></div>
+      <div id="sideVer">v—</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="live-pill" id="livePill"><span class="dot"></span><span id="liveText">连接中</span></div>
+      <button class="tb-btn" id="btnRefresh" title="立即刷新"><svg><use href="#i-refresh"/></svg></button>
+      <button class="tb-btn" id="btnTheme" title="切换主题"><svg><use href="#i-sun"/></svg></button>
+      <button class="tb-btn" id="btnSet" title="设置"><svg><use href="#i-gear"/></svg></button>
+    </div>
+
+    <!-- ================= 总览 ================= -->
+    <section class="page on" id="page-overview">
+      <div id="bannerZone"></div>
+      <div class="hero" style="margin-top:0">
+        <div class="hero-l">
+          <div class="kicker">剩余续航</div>
+          <div class="dnum hero-num" id="heroRt" style="--dm-h:56px;margin-top:10px"><span class="v">--</span></div>
+          <div class="hero-tags" id="heroTags"></div>
+          <div class="hero-dev" id="heroDev"></div>
+        </div>
+        <div class="hero-r">
+          <div>
+            <div class="kicker" style="text-align:right">电池电量</div>
+            <div class="dnum" id="heroChg" style="--dm-h:56px;margin-top:10px"><span class="v">--</span><span class="unit">%</span></div>
+          </div>
+          <div class="hero-sub" id="heroBat"></div>
+        </div>
+      </div>
+
+      <div class="grid g4" style="margin-top:13px">
+        <div class="metric" id="mIn">
+          <div class="lbl">输入</div>
+          <div class="mv"><div class="dnum" style="--dm-h:24px"><span class="v">--</span><span class="unit">V</span></div></div>
+          <div class="bar"><i></i></div>
+          <div class="sub">—</div>
+        </div>
+        <div class="metric" id="mOut">
+          <div class="lbl">输出</div>
+          <div class="mv"><div class="dnum" style="--dm-h:24px"><span class="v">--</span><span class="unit">V</span></div></div>
+          <div class="bar"><i></i></div>
+          <div class="sub">—</div>
+        </div>
+        <div class="metric" id="mLoad">
+          <div class="lbl">负载</div>
+          <div class="mv"><div class="dnum" style="--dm-h:24px"><span class="v">--</span><span class="unit">W</span></div></div>
+          <div class="bar"><i></i></div>
+          <div class="sub">—</div>
+        </div>
+        <div class="metric" id="mHealth">
+          <div class="lbl">电池健康</div>
+          <div class="mv"><div class="dnum" style="--dm-h:24px"><span class="v">--</span><span class="unit">分</span></div></div>
+          <div class="bar"><i></i></div>
+          <div class="sub">—</div>
+        </div>
+      </div>
+
+      <div class="chart-card" style="margin-top:13px">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title" id="chTitle">输入电压</div>
+            <div class="kicker" style="margin-top:4px" id="chSub">—</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <div class="seg" id="metricSeg">
+              <button data-m="in_v" class="on">输入</button>
+              <button data-m="out_v">输出</button>
+              <button data-m="load">负载</button>
+              <button data-m="chg">电量</button>
+              <button data-m="rt">续航</button>
+              <button data-m="temp">温度</button>
+            </div>
+            <div class="seg" id="rangeSeg">
+              <button data-r="1h" class="on">1 时</button>
+              <button data-r="6h">6 时</button>
+              <button data-r="24h">24 时</button>
+              <button data-r="7d">7 天</button>
+            </div>
+          </div>
+        </div>
+        <div class="chart-wrap" id="chartWrap">
+          <div class="chart-empty">暂无历史数据，采集几分钟后出现</div>
+          <div class="chart-tip" id="chartTip"></div>
+        </div>
+      </div>
+
+      <div class="grid g2" style="margin-top:13px">
+        <div class="card">
+          <div class="chart-head" style="margin-bottom:10px">
+            <div class="chart-title">电池组</div>
+            <div class="kicker" id="batKick">—</div>
+          </div>
+          <div id="batRows"></div>
+        </div>
+        <div class="card">
+          <div class="chart-head" style="margin-bottom:10px">
+            <div class="chart-title">最近事件</div>
+            <button class="btn sm" data-goto="events">全部</button>
+          </div>
+          <div class="ev-list" id="recentEvents"><div class="empty" style="padding:24px 0"><div class="ed">暂无事件</div></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 事件 ================= -->
+    <section class="page" id="page-events">
+      <div class="chart-head" style="margin-bottom:13px">
+        <div>
+          <div class="chart-title" style="font-size:19px">事件时间线</div>
+          <div class="kicker" style="margin-top:4px" id="evKick">—</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div class="seg" id="evFilter">
+            <button data-f="" class="on">全部</button>
+            <button data-f="POWER_LOSS">断电</button>
+            <button data-f="POWER_RESTORE">恢复</button>
+            <button data-f="REPLACE_BATTERY">电池告警</button>
+          </div>
+          <button class="btn sm" id="btnCsv"><svg style="width:13px;height:13px"><use href="#i-down"/></svg>CSV</button>
+        </div>
+      </div>
+      <div id="statZone"></div>
+      <div class="card" id="evCard"><div class="ev-list" id="evList"></div></div>
+      <div id="cycleZone" style="margin-top:13px"></div>
+    </section>
+
+    <!-- ================= 变量 ================= -->
+    <section class="page" id="page-vars">
+      <div class="chart-head" style="margin-bottom:13px">
+        <div>
+          <div class="chart-title" style="font-size:19px">原始变量</div>
+          <div class="kicker" style="margin-top:4px" id="varKick">—</div>
+        </div>
+      </div>
+      <div id="lowbattZone"></div>
+      <div class="var-search">
+        <svg><use href="#i-search"/></svg>
+        <input id="varSearch" placeholder="搜索变量名或中文名，例如 battery / 温度">
+      </div>
+      <div id="varList"></div>
+    </section>
+  </main>
+</div>
+
+<nav class="bottom-nav" id="bottomNav">
+  <button data-page="overview" class="on"><svg><use href="#i-home"/></svg>总览</button>
+  <button data-page="events"><svg><use href="#i-clock"/></svg>事件</button>
+  <button data-page="vars"><svg><use href="#i-list"/></svg>变量</button>
+</nav>
+
+<div class="scrim" id="scrim"></div>
+<aside class="sheet" id="sheet">
+  <div class="sheet-head">
+    <div class="sheet-title">设置</div>
+    <button class="tb-btn" id="btnClose"><svg><use href="#i-x"/></svg></button>
+  </div>
+  <div class="sheet-body">
+    <div class="sheet-sec">采集</div>
+    <div class="card tight">
+      <div class="field">
+        <div class="field-l"><div class="nm">采样间隔</div><div class="hint">秒。驱动自身 pollinterval=2，低于 3 秒只会拿到重复值</div></div>
+        <input type="number" id="setPoll" min="3" max="300" step="1">
+      </div>
+      <div class="field">
+        <div class="field-l"><div class="nm">UPS 实例名</div><div class="hint">留空自动发现；多台时填 <code class="mono-sm">upsc -l</code> 里的名字</div></div>
+        <input type="text" id="setUps" class="wide" placeholder="自动">
+      </div>
+      <div class="field">
+        <div class="field-l"><div class="nm">电池标称容量</div><div class="hint">Ah。常见 12V/9Ah × 2 组 → 填 9。用于测算实际容量</div></div>
+        <input type="number" id="setAh" min="0.5" max="500" step="0.5">
+      </div>
+      <div class="field">
+        <div class="field-l"><div class="nm">允许放电深度</div><div class="hint">0.3~1.0，铅酸一般 0.85。影响容量测算分母</div></div>
+        <input type="number" id="setDod" min="0.3" max="1" step="0.01">
+      </div>
+    </div>
+
+    <div class="sheet-sec">软件更新</div>
+    <div class="card tight">
+      <div id="updZone"></div>
+      <div class="field">
+        <div class="field-l"><div class="nm">自动检查更新</div><div class="hint">启动后与每 6 小时检查一次</div></div>
+        <div class="sw" id="setAutoUpd"></div>
+      </div>
+      <div class="field">
+        <div class="field-l"><div class="nm">更新镜像前缀</div><div class="hint">国内直连 GitHub 失败时填，例如 <code class="mono-sm">https://ghfast.top/</code></div></div>
+        <input type="text" id="setMirror" class="wide" placeholder="留空直连">
+      </div>
+      <div style="display:flex;gap:9px;margin-top:13px;flex-wrap:wrap">
+        <button class="btn" id="btnCheckUpd">检查更新</button>
+        <button class="btn pri" id="btnDoUpd" disabled>立即更新</button>
+      </div>
+    </div>
+
+    <div class="sheet-sec">外观</div>
+    <div class="card tight">
+      <div class="field">
+        <div class="field-l"><div class="nm">主题</div></div>
+        <select id="setTheme" style="width:118px;text-align:left">
+          <option value="auto">跟随系统</option>
+          <option value="light">浅色</option>
+          <option value="dark">深色</option>
+        </select>
+      </div>
+      <div class="field">
+        <div class="field-l"><div class="nm">主色</div></div>
+        <select id="setAccent" style="width:118px;text-align:left">
+          <option value="black">墨黑</option>
+          <option value="blue">钴蓝</option>
+          <option value="green">翡翠</option>
+          <option value="cyan">青</option>
+          <option value="yellow">琥珀</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="sheet-sec">数据</div>
+    <div class="card tight">
+      <div id="dataZone"></div>
+      <div style="display:flex;gap:9px;margin-top:13px;flex-wrap:wrap">
+        <button class="btn sm" id="btnVac">整理数据库</button>
+        <button class="btn sm" id="btnExport">导出 CSV</button>
+      </div>
+    </div>
+
+    <div class="sheet-sec">关于</div>
+    <div class="card tight">
+      <div id="aboutZone"></div>
+    </div>
+  </div>
+</aside>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   upshealth 前端
+   ===================================================================== */
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+const NA = "--";
+
+const S = {
+  page: "overview",
+  status: null,
+  range: "1h",
+  metric: "in_v",
+  evFilter: "",
+  vars: null,
+  varQ: "",
+  upd: null,
+  timer: null,
+  hidden: false,
+  hist: null,
+};
+
+const METRIC_DEF = {
+  in_v:  { label: "输入电压", unit: "V",  key: "in_v",  digits: 1, minSpan: 20 },
+  out_v: { label: "输出电压", unit: "V",  key: "out_v", digits: 1, minSpan: 20 },
+  load:  { label: "负载率",   unit: "%",  key: "load",  digits: 0, minSpan: 20 },
+  chg:   { label: "电池电量", unit: "%",  key: "chg",   digits: 0, minSpan: 20 },
+  rt:    { label: "剩余续航", unit: "分", key: "rt",    digits: 1, div: 60, minSpan: 5 },
+  temp:  { label: "电池温度", unit: "℃", key: "temp",  digits: 1, minSpan: 5 },
+};
+
+const EV_STYLE = {
+  POWER_LOSS:      { cls: "crit", icon: "i-plug" },
+  POWER_RESTORE:   { cls: "ok",   icon: "i-check" },
+  LOW_BATTERY:     { cls: "crit", icon: "i-batt" },
+  REPLACE_BATTERY: { cls: "warn", icon: "i-batt" },
+  ALARM:           { cls: "crit", icon: "i-alert" },
+  FORCED_SHUTDOWN: { cls: "crit", icon: "i-alert" },
+  OVERLOAD:        { cls: "crit", icon: "i-bolt" },
+  INIT:            { cls: "mute", icon: "i-home" },
+  SESSION_START:   { cls: "mute", icon: "i-refresh" },
+  BLIND_SPOT:      { cls: "warn", icon: "i-clock" },
+  DEVICE_CHANGED:  { cls: "warn", icon: "i-plug" },
+  VARS_CHANGED:    { cls: "warn", icon: "i-list" },
+  CHARGE_JUMP:     { cls: "warn", icon: "i-batt" },
+  UPDATE:          { cls: "ok",   icon: "i-down" },
+};
+
+/* ---------------- 工具 ---------------- */
+function num(v) { const n = parseFloat(v); return isFinite(n) ? n : null; }
+function fmt(v, d) {
+  if (v === null || v === undefined || v === "") return NA;
+  const n = num(v);
+  if (n === null) return NA;
+  return d === undefined ? String(n) : n.toFixed(d);
+}
+function fmtRuntime(s) {
+  if (s === null || s === undefined) return null;
+  const n = Math.round(num(s));
+  if (n === null || n < 0) return null;
+  if (n < 60) return [String(n), "秒"];
+  const m = Math.floor(n / 60), r = n % 60;
+  if (m < 60) return [String(m), r ? "分 " + String(r).padStart(2, "0") + " 秒" : "分"];
+  const h = Math.floor(m / 60);
+  return [String(h), "时 " + String(m % 60) + " 分"];
+}
+function ago(ts) {
+  const d = Math.max(0, Date.now() / 1000 - ts);
+  if (d < 60) return "刚刚";
+  if (d < 3600) return Math.floor(d / 60) + " 分钟前";
+  if (d < 86400) return Math.floor(d / 3600) + " 小时前";
+  return Math.floor(d / 86400) + " 天前";
+}
+function hhmmss(ts) {
+  const d = new Date(ts * 1000);
+  const p = n => String(n).padStart(2, "0");
+  return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+}
+function ymd(ts) {
+  const d = new Date(ts * 1000);
+  const p = n => String(n).padStart(2, "0");
+  return (d.getMonth() + 1) + "-" + p(d.getDate()) + " " + hhmmss(ts);
+}
+function bytes(n) {
+  if (!n) return "0 B";
+  const u = ["B", "KB", "MB", "GB"];
+  let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return (i === 0 ? v : v.toFixed(1)) + " " + u[i];
+}
+function esc(s) {
+  return String(s === null || s === undefined ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function toast(msg, ms) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("on");
+  clearTimeout(t._tm);
+  t._tm = setTimeout(() => t.classList.remove("on"), ms || 2400);
+}
+
+/* ---------------- API ---------------- */
+async function api(path, opt) {
+  const r = await fetch(path, Object.assign({ cache: "no-store" }, opt || {}));
+  let j = null;
+  try { j = await r.json(); } catch (e) { j = { ok: false, error: "响应不是 JSON（HTTP " + r.status + "）" }; }
+  if (!r.ok && j && !j.error) j.error = "HTTP " + r.status;
+  return j;
+}
+async function post(path, body) {
+  return api(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-UPS-Request": "1" },
+    body: JSON.stringify(body || {}),
+  });
+}
+
+/* ---------------- 主题 ---------------- */
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem("upshealth." + k); return v === null ? d : v; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("upshealth." + k, v); } catch (e) {} },
+};
+function applyTheme() {
+  // 支持 ?theme=dark / ?accent=blue 直接指定（分享链接、截图用）
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get("theme")) LS.set("theme", q.get("theme"));
+    if (q.get("accent")) LS.set("accent", q.get("accent"));
+  } catch (e) {}
+  const th = LS.get("theme", "auto");
+  const ac = LS.get("accent", "black");
+  document.documentElement.setAttribute("data-theme", th);
+  document.documentElement.setAttribute("data-accent", ac);
+  const sel = $("#setTheme"), sela = $("#setAccent");
+  if (sel) sel.value = th;
+  if (sela) sela.value = ac;
+}
+applyTheme();
+$("#btnTheme").onclick = () => {
+  const cur = LS.get("theme", "auto");
+  const next = cur === "auto" ? "light" : cur === "light" ? "dark" : "auto";
+  LS.set("theme", next);
+  applyTheme();
+  toast(next === "auto" ? "跟随系统" : next === "light" ? "浅色" : "深色");
+};
+
+/* ---------------- 页面切换 ---------------- */
+const PAGES = ["overview", "events", "vars"];
+function go(page, fromHash) {
+  if (!PAGES.includes(page)) page = "overview";
+  S.page = page;
+  $$(".page").forEach(p => p.classList.toggle("on", p.id === "page-" + page));
+  $$("#nav .nav-item, #bottomNav button").forEach(b => b.classList.toggle("on", b.dataset.page === page));
+  if (!fromHash) { try { history.replaceState(null, "", "#" + page); } catch (e) {} }
+  if (page === "events") loadEvents();
+  if (page === "vars") loadVars();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+$$("#nav .nav-item, #bottomNav button").forEach(b => {
+  b.onclick = () => go(b.dataset.page);
+});
+$$("[data-goto]").forEach(b => { b.onclick = () => go(b.dataset.goto); });
+window.addEventListener("hashchange", () => go(location.hash.replace("#", ""), true));
+
+/* ---------------- 总览渲染 ---------------- */
+function renderStatus(j) {
+  S.status = j;
+  const live = j.live || {}, dev = j.device || {}, h = j.health || {};
+  const pill = $("#livePill"), txt = $("#liveText");
+  const dot = $("#sideDot");
+
+  if (!j.ok && j.warmup) {
+    pill.className = "live-pill stale";
+    txt.textContent = "启动中";
+    $("#sideStatus").textContent = "启动中";
+    if (dot) dot.style.background = "var(--warn)";
+    renderBanner({ kind: "info", title: "正在采集第一份数据", body: (j.err && j.err.message) || "通常 5 秒内完成" });
+    return;
+  }
+  if (!j.ok && j.err) {
+    pill.className = "live-pill bad";
+    txt.textContent = "NUT 不可达";
+    $("#sideStatus").textContent = "异常";
+    if (dot) dot.style.background = "var(--crit)";
+    renderBanner({
+      kind: "crit",
+      title: j.err.message || "采集失败",
+      body: (j.err.hint || "") + (j.err.hint ? " " : "") +
+            "<br><span class='mono-sm'>错误码 " + esc(j.err.code || "") + "</span>",
+    });
+    return;
+  }
+  if (j.stale) {
+    pill.className = "live-pill stale";
+    txt.textContent = "数据已过期";
+    $("#sideStatus").textContent = "过期";
+    if (dot) dot.style.background = "var(--warn)";
+    renderBanner({
+      kind: "warn",
+      title: "正在显示的是上一次读数",
+      body: "最新一次采集失败：" + esc((j.err && j.err.message) || "未知原因") +
+            "。以下数值不代表当前状态。",
+    });
+  } else {
+    pill.className = "live-pill";
+    txt.textContent = "实时";
+    $("#sideStatus").textContent = "实时";
+    if (dot) dot.style.background = "var(--ok)";
+    renderBanner(null);
+  }
+
+  // Hero
+  const rtp = fmtRuntime(live.rt);
+  const heroRt = $("#heroRt");
+  if (rtp) heroRt.innerHTML = '<span class="v">' + rtp[0] + '</span><span class="unit">' + rtp[1] + "</span>";
+  else heroRt.innerHTML = '<span class="v na">--</span>';
+
+  const chgEl = $("#heroChg");
+  chgEl.innerHTML = '<span class="v' + (live.chg === null || live.chg === undefined ? " na" : "") + '">' +
+    (live.chg === null || live.chg === undefined ? "--" : Math.round(live.chg)) + '</span><span class="unit">%</span>';
+
+  // 状态标签
+  const tags = [];
+  const codes = live.codes || [];
+  if (codes.includes("OL")) tags.push({ t: "市电供电", c: "ok" });
+  if (codes.includes("OB")) tags.push({ t: "电池供电", c: "crit" });
+  if (codes.includes("CHRG")) tags.push({ t: "充电中", c: "" });
+  if (codes.includes("DISCHRG")) tags.push({ t: "放电中", c: "warn" });
+  if (codes.includes("LB")) tags.push({ t: "低电量", c: "crit" });
+  if (codes.includes("RB")) tags.push({ t: "需换电池", c: "crit" });
+  if (codes.includes("ALARM")) tags.push({ t: "告警", c: "crit" });
+  if (codes.includes("FSD")) tags.push({ t: "强制关机", c: "crit" });
+  if (codes.includes("BYPASS")) tags.push({ t: "旁路", c: "warn" });
+  if (codes.includes("OVER")) tags.push({ t: "超载", c: "crit" });
+  if (!tags.length) tags.push({ t: live.status || "状态未知", c: "" });
+  if (h.grade_cn && h.score !== null && h.score !== undefined) {
+    const gc = h.score >= 80 ? "ok" : h.score >= 60 ? "" : h.score >= 40 ? "warn" : "crit";
+    tags.push({ t: "电池 " + h.grade_cn, c: gc });
+  }
+  $("#heroTags").innerHTML = tags.map(x => '<span class="tag ' + x.c + '">' + esc(x.t) + "</span>").join("");
+
+  // 设备信息
+  const devBits = [];
+  if (dev.model) devBits.push("<span>型号 <b>" + esc(dev.model) + "</b></span>");
+  if (dev.serial) devBits.push("<span>SN <b>" + esc(dev.serial) + "</b></span>");
+  if (dev.type) devBits.push("<span>类型 <b>" + esc(dev.type === "online" ? "在线式" : dev.type) + "</b></span>");
+  if (dev.driver_data) devBits.push("<span>驱动 <b>" + esc(dev.driver_data) + "</b></span>");
+  if (dev.nut) devBits.push("<span>NUT <b>" + esc(dev.nut) + "</b></span>");
+  $("#heroDev").innerHTML = devBits.join("");
+
+  $("#heroBat").innerHTML =
+    (live.bat_v !== null && live.bat_v !== undefined ? fmt(live.bat_v, 1) + " V" : "--") +
+    " · " + (live.temp !== null && live.temp !== undefined ? fmt(live.temp, 1) + " ℃" : "--") +
+    "<br>" + (j.meta && j.meta.ticks ? "已采集 " + j.meta.ticks + " 次" : "");
+
+  // 四个指标卡
+  const srcMap = { normal: "市电", battery: "电池", boost: "升压", trim: "降压" };
+  const srcCn = srcMap[live.source] || live.source || "市电";
+  setMetric("#mIn", "输入", live.in_v, "V", live.in_hz, "Hz", inNorm(live.in_v), live.in_hz, "", srcCn);
+  setMetric("#mOut", "输出", live.out_v, "V", live.out_a, "A", outNorm(live.out_v), live.out_a, "",
+    dev.type === "online" ? "在线逆变" : "输出");
+  const loadPct = live.load;
+  setMetric("#mLoad", "负载", live.rp, "W", live.load, "%", loadPct, loadPct,
+    loadPct >= 80 ? "crit" : loadPct >= 60 ? "warn" : "", live.nominal_va ? "额定 " + live.nominal_va + " VA" : "");
+  const hs = h.score;
+  const hcls = hs === null || hs === undefined ? "" : hs >= 80 ? "ok" : hs >= 60 ? "" : hs >= 40 ? "warn" : "crit";
+  const mh = $("#mHealth");
+  mh.className = "metric" + (hcls === "warn" ? " warn" : hcls === "crit" ? " crit" : "");
+  mh.querySelector(".v").textContent = hs === null || hs === undefined ? NA : hs;
+  const hi = mh.querySelector(".bar>i");
+  hi.style.width = (hs || 0) + "%";
+  hi.className = hcls === "ok" ? "ok" : hcls === "crit" ? "c" : hcls === "warn" ? "w" : "";
+  mh.querySelector(".sub").textContent = h.capacity_pct !== null && h.capacity_pct !== undefined
+    ? "实测容量 " + fmt(h.capacity_pct, 0) + "%" + (h.grade_cn ? " · " + h.grade_cn : "")
+    : (h.grade_cn || "数据不足");
+
+  // 电池组
+  renderBatRows(j);
+
+  // 侧栏版本
+  $("#sideVer").textContent = "v" + ((j.meta && j.meta.ver) || "—");
+}
+
+function inNorm(v) { return v === null || v === undefined ? null : Math.max(0, Math.min(100, (v - 180) / 90 * 100)); }
+function outNorm(v) { return v === null || v === undefined ? null : Math.max(0, Math.min(100, (v - 180) / 90 * 100)); }
+
+function setMetric(sel, label, mainVal, mainUnit, subVal, subUnit, barPct, barPct2, cls, subText) {
+  const el = $(sel);
+  el.className = "metric" + (cls === "warn" ? " warn" : cls === "crit" ? " crit" : "");
+  el.querySelector(".v").textContent = mainVal === null || mainVal === undefined ? NA : fmt(mainVal, 0);
+  el.querySelector(".unit").textContent = mainUnit;
+  const i = el.querySelector(".bar>i");
+  i.style.width = (barPct === null || barPct === undefined ? 0 : barPct) + "%";
+  i.className = cls === "crit" ? "c" : cls === "warn" ? "w" : "";
+  const parts = [];
+  if (subVal !== null && subVal !== undefined) parts.push(fmt(subVal, 1) + " " + subUnit);
+  if (subText) parts.push(subText);
+  el.querySelector(".sub").textContent = parts.join(" · ") || "—";
+}
+
+function renderBatRows(j) {
+  const live = j.live || {}, dev = j.device || {}, h = j.health || {};
+  // [标签, 值, 单位, 小数位]；unit 为空则不渲染单位（续航用 mm:ss 自带格式）
+  const rows = [
+    ["电量", live.chg, "%", 0],
+    ["续航", live.rt, "", 0, "rt"],
+    ["电压", live.bat_v, "V", 1],
+    ["温度", live.temp, "℃", 1],
+    ["实测容量", h.capacity_pct, "%", 0],
+    ["可放出能量", h.usable_wh, "Wh", 1],
+    ["低电量阈值", dev.lowbatt_nut, "%", 0],
+    ["固件保护点", dev.lowbatt_fw, "%", 0],
+  ];
+  $("#batRows").innerHTML = rows.map(([k, v, u, d, mode]) => {
+    let val, miss = v === null || v === undefined;
+    if (mode === "rt" && !miss) {
+      const n = Math.round(num(v));
+      val = Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0");
+    } else {
+      val = miss ? NA : fmt(v, d);
+    }
+    return '<div class="vrow"><div class="vk"><div class="cn">' + esc(k) +
+      (mode === "rt" ? '<span class="key" style="display:inline;margin-left:6px">分:秒</span>' : "") +
+      '</div></div><div class="vv' + (miss ? " miss" : "") + '">' + esc(val) +
+      (!miss && u ? '<span class="u">' + esc(u) + "</span>" : "") + "</div></div>";
+  }).join("");
+  const gap = (dev.lowbatt_nut !== null && dev.lowbatt_nut !== undefined &&
+               dev.lowbatt_fw !== null && dev.lowbatt_fw !== undefined)
+    ? (dev.lowbatt_nut - dev.lowbatt_fw) : null;
+  $("#batKick").textContent = gap !== null && gap > 0
+    ? "阈值余量 " + fmt(gap, 0) + "%" : "";
+}
+
+function renderBanner(b) {
+  const z = $("#bannerZone");
+  if (!b) { z.innerHTML = ""; return; }
+  const ic = b.kind === "ok" ? "i-check" : b.kind === "crit" ? "i-alert" : b.kind === "warn" ? "i-alert" : "i-clock";
+  z.innerHTML = '<div class="banner ' + b.kind + '" style="margin-bottom:13px">' +
+    '<svg><use href="#' + ic + '"/></svg><div><div class="bt">' + esc(b.title) +
+    '</div><div class="bd">' + (b.body || "") + "</div></div></div>";
+}
+
+/* ---------------- 图表 ---------------- */
+function drawChart(points, def, range) {
+  const wrap = $("#chartWrap");
+  const W = wrap.clientWidth || 760, H = 190;
+  const padL = 42, padR = 10, padT = 12, padB = 24;
+  const iw = Math.max(10, W - padL - padR), ih = H - padT - padB;
+
+  const pts = [];
+  for (const p of points) {
+    let v = p[def.key];
+    if (v === null || v === undefined) continue;
+    v = num(v);
+    if (v === null) continue;
+    if (def.div) v = v / def.div;
+    pts.push([p.ts, v]);
+  }
+  if (!pts.length) {
+    wrap.innerHTML = '<div class="chart-empty">该区间暂无数据</div>';
+    return;
+  }
+  let mn = Math.min(...pts.map(p => p[1]));
+  let mx = Math.max(...pts.map(p => p[1]));
+  // 最小可视跨度：避免 0.7 V 的微小波动被 Y 轴放大成「断崖」，误导判断
+  const ms = def.minSpan || 0;
+  if (mx - mn < ms) { const c = (mx + mn) / 2; mn = c - ms / 2; mx = c + ms / 2; }
+  const padV = (mx - mn) * 0.12;
+  const lo = mn - padV, hi = mx + padV;
+  const tickPrec = (hi - lo) >= 20 ? 0 : (hi - lo) >= 4 ? 1 : 2;
+  const t0 = pts[0][0], t1 = pts[pts.length - 1][0];
+  const spanT = Math.max(1, t1 - t0);
+  const X = t => padL + (t - t0) / spanT * iw;
+  const Y = v => padT + ih - (v - lo) / (hi - lo) * ih;
+
+  // 网格与 Y 轴刻度
+  let grid = "", yticks = [];
+  for (let i = 0; i <= 3; i++) {
+    const v = lo + (hi - lo) * i / 3;
+    const y = Y(v);
+    yticks.push('<text x="' + (padL - 8) + '" y="' + (y + 3.5) + '" text-anchor="end" ' +
+      'font-family="var(--font-mono)" font-size="9.5" fill="var(--ink-3)">' +
+      (tickPrec === 0 ? Math.round(v) : v.toFixed(tickPrec)) + "</text>");
+    grid += '<line x1="' + padL + '" y1="' + y + '" x2="' + (padL + iw) + '" y2="' + y +
+      '" stroke="var(--line)" stroke-width="1"/>';
+  }
+  // X 轴时间刻度
+  let xticks = "";
+  const nx = Math.min(5, Math.max(2, Math.floor(iw / 110)));
+  for (let i = 0; i <= nx; i++) {
+    const t = t0 + spanT * i / nx;
+    const x = X(t);
+    const d = new Date(t * 1000);
+    const p2 = n => String(n).padStart(2, "0");
+    const lbl = spanT > 86400
+      ? (d.getMonth() + 1) + "/" + d.getDate()
+      : spanT <= 900
+        ? p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds())
+        : p2(d.getHours()) + ":" + p2(d.getMinutes());
+    xticks += '<text x="' + x + '" y="' + (H - 6) + '" text-anchor="middle" ' +
+      'font-family="var(--font-mono)" font-size="9.5" fill="var(--ink-3)">' + lbl + "</text>";
+  }
+
+  // 折线 + 面积
+  const step = Math.max(1, Math.floor(pts.length / (iw * 1.6)));
+  const sampled = [];
+  for (let i = 0; i < pts.length; i += step) sampled.push(pts[i]);
+  if (sampled[sampled.length - 1] !== pts[pts.length - 1]) sampled.push(pts[pts.length - 1]);
+
+  let d = "";
+  sampled.forEach(([t, v], i) => { d += (i ? " L" : "M") + X(t).toFixed(1) + "," + Y(v).toFixed(1); });
+  const area = d + " L" + X(sampled[sampled.length - 1][0]).toFixed(1) + "," + (padT + ih) +
+    " L" + X(sampled[0][0]).toFixed(1) + "," + (padT + ih) + " Z";
+
+  const gid = "ga" + Math.random().toString(36).slice(2, 8);
+  wrap.innerHTML =
+    '<svg viewBox="0 0 ' + W + " " + H + '" style="height:' + H + 'px">' +
+    '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0%" stop-color="var(--ink-1)" stop-opacity=".15"/>' +
+    '<stop offset="100%" stop-color="var(--ink-1)" stop-opacity="0"/></linearGradient></defs>' +
+    grid + yticks.join("") + xticks +
+    '<path d="' + area + '" fill="url(#' + gid + ')"/>' +
+    '<path d="' + d + '" fill="none" stroke="var(--ink-1)" stroke-width="1.6" ' +
+    'stroke-linejoin="round" stroke-linecap="round"/>' +
+    '<circle cx="' + X(sampled[sampled.length - 1][0]).toFixed(1) + '" cy="' +
+    Y(sampled[sampled.length - 1][1]).toFixed(1) + '" r="3" fill="var(--ink-1)"/>' +
+    "</svg>" +
+    '<div class="chart-tip" id="chartTip"></div>';
+
+  // 悬停
+  const svg = wrap.querySelector("svg");
+  const tip = wrap.querySelector("#chartTip");
+  const move = ev => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+    const tt = t0 + (px - padL) / iw * spanT;
+    let best = null, bd = Infinity;
+    for (const [t, v] of pts) {
+      const dd = Math.abs(t - tt);
+      if (dd < bd) { bd = dd; best = [t, v]; }
+    }
+    if (!best) return;
+    const [t, v] = best;
+    tip.innerHTML = "<b>" + (def.div ? (v * def.div).toFixed(0) : v.toFixed(def.digits)) +
+      "</b> " + def.unit + '<br><span style="color:var(--ink-3);font-weight:500">' + ymd(t) + "</span>";
+    tip.style.left = Math.max(0, Math.min(W - 130, X(t) - 50)) + "px";
+    tip.style.top = Math.max(0, Y(v) - 54) + "px";
+    tip.classList.add("on");
+  };
+  svg.addEventListener("mousemove", move);
+  svg.addEventListener("mouseleave", () => tip.classList.remove("on"));
+  svg.addEventListener("touchstart", move, { passive: true });
+  svg.addEventListener("touchmove", move, { passive: true });
+}
+
+async function loadHistory() {
+  const j = await api("/api/history?range=" + S.range);
+  if (!j || !j.ok) return;
+  S.hist = j;
+  const def = METRIC_DEF[S.metric];
+  $("#chTitle").textContent = def.label;
+  const pts = j.points || [];
+  let extra = j.res_label ? "粒度 " + j.res_label + " · " + pts.length + " 点" : pts.length + " 点";
+  if (pts.length) {
+    let mn = null, mx = null;
+    for (const p of pts) {
+      let v = num(p[def.key]);
+      if (v === null) continue;
+      if (def.div) v /= def.div;
+      mn = mn === null ? v : Math.min(mn, v);
+      mx = mx === null ? v : Math.max(mx, v);
+    }
+    if (mn !== null) extra += " · 最低 " + mn.toFixed(def.digits) + " / 最高 " + mx.toFixed(def.digits) + " " + def.unit;
+  }
+  $("#chSub").textContent = extra;
+  drawChart(pts, def, S.range);
+}
+
+/* ---------------- 事件 ---------------- */
+function evHtml(e) {
+  const st = EV_STYLE[e.type] || { cls: "mute", icon: "i-clock" };
+  const label = e.label || e.type;
+  const bits = [];
+  if (e.chg !== null && e.chg !== undefined) bits.push("电量 " + fmt(e.chg, 0) + "%");
+  if (e.rt !== null && e.rt !== undefined) { const r = fmtRuntime(e.rt); if (r) bits.push("续航 " + r[0] + " " + r[1]); }
+  if (e.in_v !== null && e.in_v !== undefined) bits.push("输入 " + fmt(e.in_v, 0) + " V");
+  if (e.load !== null && e.load !== undefined) bits.push("负载 " + fmt(e.load, 0) + "%");
+  const detail = e.note || bits.join(" · ");
+  return '<div class="ev">' +
+    '<div class="ev-ic ' + st.cls + '"><svg><use href="#' + st.icon + '"/></svg></div>' +
+    '<div class="ev-b"><div class="ev-t">' + esc(label) +
+    (e.to_st ? '<span class="tag mono" style="font-size:10px;padding:3px 7px">' + esc(e.to_st) + "</span>" : "") +
+    '</div><div class="ev-n">' + esc(detail) + "</div></div>" +
+    '<div class="ev-time">' + ymd(e.ts) + "<br>" + ago(e.ts) + "</div></div>";
+}
+
+async function loadEvents() {
+  const q = "/api/events?limit=300" + (S.evFilter ? "&type=" + encodeURIComponent(S.evFilter) : "");
+  const j = await api(q);
+  if (!j || !j.ok) return;
+  const evs = j.events || [];
+  $("#evKick").textContent = "共 " + evs.length + " 条" +
+    (j.counts ? " · 断电 " + (j.counts.POWER_LOSS || 0) + " 次" : "");
+  $("#evList").innerHTML = evs.length
+    ? evs.map(evHtml).join("")
+    : '<div class="empty"><div class="et">暂无事件</div><div class="ed">市电中断、切换电池、低电量、换电池告警都会记录在这里</div></div>';
+  renderStats(j.counts || {});
+  S.counts = j.counts || {};
+  // 放电周期
+  loadCycles();
+}
+
+/* 事件页顶部统计：一眼看出历史上有过几次断电 */
+function renderStats(counts) {
+  const cs = S.cyclesData || [];
+  let dur = 0, wh = 0, outages = 0;
+  for (const c of cs) {
+    if (c.start_ts && c.end_ts) dur += (c.end_ts - c.start_ts);
+    if (c.wh) wh += c.wh;
+    if (c.kind === "outage") outages++;
+  }
+  const cells = [
+    ["市电中断", (counts.POWER_LOSS || 0) + " 次"],
+    ["已恢复", (counts.POWER_RESTORE || 0) + " 次"],
+    ["换电池告警", (counts.REPLACE_BATTERY || 0) + " 次"],
+    ["累计放电", dur ? Math.round(dur / 60) + " 分" + (wh ? " · " + wh.toFixed(0) + " Wh" : "") : "—"],
+  ];
+  $("#statZone").innerHTML = '<div class="stat-row">' + cells.map(([k, v]) =>
+    '<div class="stat-cell"><div class="kicker">' + esc(k) + '</div><div class="sv">' + esc(v) + "</div></div>"
+  ).join("") + "</div>";
+}
+
+/* 总览页的「最近事件」——与事件页独立，避免首次进总览时空白 */
+async function loadRecent() {
+  const j = await api("/api/events?limit=4");
+  if (!j || !j.ok) return;
+  const evs = j.events || [];
+  $("#recentEvents").innerHTML = evs.length
+    ? evs.map(evHtml).join("")
+    : '<div class="empty" style="padding:24px 0"><div class="ed">暂无事件</div></div>';
+}
+
+async function loadCycles() {
+  const j = await api("/api/cycles?limit=200");
+  if (!j || !j.ok) return;
+  const cs = j.cycles || [];
+  S.cyclesData = cs;
+  if (S.counts) renderStats(S.counts);
+  if (!cs.length) { $("#cycleZone").innerHTML = ""; return; }
+  const rows = cs.map(c => {
+    const kind = c.kind === "test" ? "测试放电" : c.kind === "outage" ? "市电中断" : "放电";
+    const kc = c.kind === "outage" ? "crit" : "";
+    return '<div class="vrow"><div class="vk"><div class="cn">' + esc(ymd(c.start_ts)) +
+      ' <span class="tag ' + kc + '" style="font-size:10px;padding:3px 7px">' + esc(kind) + "</span></div>" +
+      '<div class="key">' + esc(c.note || "") + "</div></div>" +
+      '<div class="vv">' + (c.wh ? fmt(c.wh, 1) + '<span class="u">Wh</span>' : "--") + "</div></div>";
+  }).join("");
+  $("#cycleZone").innerHTML = '<div class="vgroup"><div class="vgroup-h"><span class="nm">放电周期</span>' +
+    '<span class="kicker">真断电与人为测试分开统计</span></div>' + rows + "</div>";
+}
+
+$("#evFilter").onclick = e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  $$("#evFilter button").forEach(x => x.classList.toggle("on", x === b));
+  S.evFilter = b.dataset.f;
+  loadEvents();
+};
+$("#btnCsv").onclick = () => { location.href = "/api/export.csv?range=24h"; };
+
+/* ---------------- 变量 ---------------- */
+async function loadVars() {
+  const j = await api("/api/vars");
+  if (!j || !j.ok) return;
+  S.vars = j;
+  $("#varKick").textContent = "已上报 " + j.present + " / " + j.total + " 项" +
+    (j.extra_count ? " · 未收录 " + j.extra_count + " 项" : "");
+  const lb = j.lowbatt || {};
+  if (lb.gap !== null && lb.gap !== undefined) {
+    const ok = lb.gap >= 5;
+    $("#lowbattZone").innerHTML = '<div class="banner ' + (ok ? "info" : "warn") +
+      '" style="margin-bottom:13px"><svg><use href="#' + (ok ? "i-clock" : "i-alert") +
+      '"/></svg><div><div class="bt">低电量阈值余量 ' + fmt(lb.gap, 0) + "%</div><div class=\"bd\">" +
+      "NUT 报警线 " + fmt(lb.nut, 0) + "%，台达固件真正切断输出的保护点 " + fmt(lb.firmware, 0) +
+      "%。<b>关机判据必须留在这 " + fmt(lb.gap, 0) + "% 余量之上</b>，一旦电量计失准，这段余量会瞬间消失。" +
+      "</div></div></div>";
+  } else {
+    $("#lowbattZone").innerHTML = "";
+  }
+  renderVars();
+}
+
+function renderVars() {
+  if (!S.vars) return;
+  const q = S.varQ.trim().toLowerCase();
+  const groups = S.vars.groups || [];
+  let html = "", shown = 0;
+  for (const g of groups) {
+    const items = g.items.filter(it => !q ||
+      it.key.toLowerCase().includes(q) || (it.cn || "").toLowerCase().includes(q) ||
+      String(it.value === null || it.value === undefined ? "" : it.value).toLowerCase().includes(q));
+    if (!items.length) continue;
+    shown += items.length;
+    html += '<div class="vgroup"><div class="vgroup-h"><span class="nm">' + esc(g.group) +
+      '</span><span class="kicker">' + items.length + " 项</span></div>";
+    for (const it of items) {
+      const miss = !it.present || it.value === null || it.value === undefined || it.value === "";
+      let val = miss ? "未上报" : it.value;
+      if (!miss && it.kind === "num") {
+        const n = num(it.value);
+        if (n !== null) {
+          val = Number.isInteger(n) ? String(n)
+            : (Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(1));
+        }
+      }
+      html += '<div class="vrow"><div class="vk"><div class="cn">' + esc(it.cn || it.key) +
+        '</div><div class="key">' + esc(it.key) + "</div>" +
+        (it.note ? '<div class="vnote">' + esc(it.note) + "</div>" : "") + "</div>" +
+        '<div class="vv' + (miss ? " miss" : "") + '">' + esc(val) +
+        (!miss && it.unit ? '<span class="u">' + esc(it.unit) + "</span>" : "") + "</div></div>";
+    }
+    html += "</div>";
+  }
+  $("#varList").innerHTML = html || '<div class="empty"><div class="et">没有匹配的变量</div><div class="ed">换个关键词试试</div></div>';
+}
+let varTimer = null;
+$("#varSearch").oninput = e => {
+  S.varQ = e.target.value;
+  clearTimeout(varTimer);
+  varTimer = setTimeout(renderVars, 140);
+};
+
+/* ---------------- 设置 ---------------- */
+function openSheet(on) {
+  $("#sheet").classList.toggle("on", on);
+  $("#scrim").classList.toggle("on", on);
+  if (on) loadSettings();
+}
+$("#btnSet").onclick = () => openSheet(true);
+$("#btnClose").onclick = () => openSheet(false);
+$("#scrim").onclick = () => openSheet(false);
+document.addEventListener("keydown", e => { if (e.key === "Escape") openSheet(false); });
+
+async function loadSettings() {
+  const j = await api("/api/settings");
+  if (!j || !j.ok) return;
+  const c = j.config || {};
+  $("#setPoll").value = c.poll_interval;
+  $("#setUps").value = c.ups_name || "";
+  $("#setAh").value = c.battery_ah;
+  $("#setDod").value = c.battery_dod;
+  $("#setMirror").value = c.update_mirror || "";
+  $("#setAutoUpd").classList.toggle("on", !!c.auto_check_update);
+  renderUpdate();
+  renderData();
+  renderAbout();
+}
+
+async function saveSetting(patch) {
+  const j = await post("/api/settings", patch);
+  if (j && j.ok) { toast("已保存"); }
+  else { toast((j && j.error) || "保存失败"); }
+  return j;
+}
+$("#setPoll").onchange = e => saveSetting({ poll_interval: parseInt(e.target.value, 10) || 5 });
+$("#setUps").onchange = e => saveSetting({ ups_name: e.target.value.trim() });
+$("#setAh").onchange = e => saveSetting({ battery_ah: parseFloat(e.target.value) || 9 });
+$("#setDod").onchange = e => saveSetting({ battery_dod: parseFloat(e.target.value) || 0.85 });
+$("#setMirror").onchange = e => saveSetting({ update_mirror: e.target.value.trim() });
+$("#setAutoUpd").onclick = e => {
+  const on = !e.currentTarget.classList.contains("on");
+  e.currentTarget.classList.toggle("on", on);
+  saveSetting({ auto_check_update: on });
+};
+$("#setTheme").onchange = e => { LS.set("theme", e.target.value); applyTheme(); };
+$("#setAccent").onchange = e => { LS.set("accent", e.target.value); applyTheme(); };
+
+/* ---------------- 更新 ---------------- */
+function renderUpdate() {
+  const z = $("#updZone");
+  const u = S.upd;
+  if (!u) {
+    z.innerHTML = '<div class="banner info"><svg><use href="#i-clock"/></svg><div>' +
+      '<div class="bt">当前版本 ' + esc((S.status && S.status.meta && S.status.meta.ver) || "—") + "</div>" +
+      '<div class="bd">点「检查更新」查询 GitHub Releases</div></div></div>';
+    return;
+  }
+  if (!u.ok) {
+    z.innerHTML = '<div class="banner warn"><svg><use href="#i-alert"/></svg><div>' +
+      '<div class="bt">检查失败</div><div class="bd">' + esc(u.error || "未知错误") +
+      (u.hint ? "<br>" + esc(u.hint) : "") + "</div></div></div>";
+    $("#btnDoUpd").disabled = true;
+    return;
+  }
+  if (!u.newer) {
+    z.innerHTML = '<div class="banner ok"><svg><use href="#i-check"/></svg><div>' +
+      '<div class="bt">已是最新版本 ' + esc(u.current) + "</div>" +
+      '<div class="bd">当前 ' + esc(u.current) + "，最新 " + esc(u.latest) + "</div></div></div>";
+    $("#btnDoUpd").disabled = true;
+    return;
+  }
+  const notes = (u.notes || "").replace(/<[^>]+>/g, "").slice(0, 400);
+  z.innerHTML = '<div class="banner warn"><svg><use href="#i-down"/></svg><div>' +
+    '<div class="bt">发现新版本 ' + esc(u.latest) + "</div>" +
+    '<div class="bd">当前 ' + esc(u.current) + " · " + (u.fpk ? esc(u.fpk.name) + " " + bytes(u.fpk.size) : "无安装包") +
+    (notes ? "<br><span class='mono-sm'>" + esc(notes) + "</span>" : "") + "</div></div></div>";
+  $("#btnDoUpd").disabled = !u.fpk;
+}
+
+$("#btnCheckUpd").onclick = async e => {
+  const b = e.currentTarget;
+  b.disabled = true; b.textContent = "检查中…";
+  const j = await api("/api/update/check");
+  S.upd = j;
+  renderUpdate();
+  b.disabled = false; b.textContent = "检查更新";
+  if (j && j.ok && !j.newer) toast("已是最新版本");
+};
+
+$("#btnDoUpd").onclick = async e => {
+  if (!S.upd || !S.upd.fpk) return;
+  if (!confirm("将下载 " + S.upd.latest + " 并覆盖当前程序，服务会自动重启。\n\n数据库与设置会保留。继续？")) return;
+  const b = e.currentTarget;
+  b.disabled = true; b.textContent = "下载中…";
+  const j = await post("/api/update/apply", {});
+  if (j && j.ok) {
+    b.textContent = "重启中…";
+    toast("更新完成，正在重启…");
+    setTimeout(() => waitForRestart(), 2500);
+  } else {
+    toast((j && j.error) || "更新失败");
+    b.disabled = false; b.textContent = "立即更新";
+  }
+};
+
+async function waitForRestart() {
+  for (let i = 0; i < 40; i++) {
+    await new Promise(r => setTimeout(r, 1200));
+    try {
+      const r = await fetch("/api/ping", { cache: "no-store" });
+      if (r.ok) { const j = await r.json(); location.reload(); return; }
+    } catch (e) {}
+  }
+  toast("重启超时，请手动重启应用");
+}
+
+/* ---------------- 数据面板 ---------------- */
+function renderData() {
+  const st = S.status || {};
+  const meta = st.meta || {};
+  const c = meta.counts || {};
+  const rows = [
+    ["数据库大小", bytes(meta.db || 0)],
+    ["原始采样", (c.res0 || 0) + " 行（保留 24 小时）"],
+    ["1 分钟聚合", (c.res1 || 0) + " 行（保留 30 天）"],
+    ["10 分钟聚合", (c.res2 || 0) + " 行（保留 3 年）"],
+    ["事件", (c.events || 0) + " 条"],
+    ["放电周期", (c.cycles || 0) + " 次"],
+  ];
+  $("#dataZone").innerHTML = rows.map(([k, v]) =>
+    '<div class="vrow"><div class="vk"><div class="cn">' + esc(k) + '</div></div>' +
+    '<div class="vv" style="font-size:12.5px">' + esc(v) + "</div></div>").join("");
+}
+$("#btnVac").onclick = async () => {
+  const j = await post("/api/db/vacuum", {});
+  toast(j && j.ok ? "已开始整理" : "操作失败");
+  setTimeout(refreshOnce, 3000);
+};
+$("#btnExport").onclick = () => { location.href = "/api/export.csv?range=7d"; };
+
+function renderAbout() {
+  const st = S.status || {};
+  const meta = st.meta || {};
+  const dev = st.device || {};
+  const rows = [
+    ["版本", "v" + (meta.ver || "—")],
+    ["UPS", [dev.mfr, dev.model].filter(Boolean).join(" ") || "—"],
+    ["序列号", dev.serial || "—"],
+    ["驱动", [dev.driver, dev.driver_data].filter(Boolean).join(" · ") || "—"],
+    ["NUT", dev.nut || "—"],
+    ["实例名", dev.name || "—"],
+    ["运行时长", meta.uptime ? Math.floor(meta.uptime / 60) + " 分钟" : "—"],
+    ["仓库", "github.com/ttkl9559-cell/upshealth"],
+  ];
+  $("#aboutZone").innerHTML = rows.map(([k, v]) =>
+    '<div class="vrow"><div class="vk"><div class="cn">' + esc(k) + '</div></div>' +
+    '<div class="vv" style="font-size:12.5px;max-width:60%;overflow:hidden;text-overflow:ellipsis">' +
+    esc(v) + "</div></div>").join("");
+}
+
+/* ---------------- 轮询 ---------------- */
+async function refreshOnce() {
+  const j = await api("/api/status");
+  if (!j) return;
+  renderStatus(j);
+  if (S.page === "overview") { loadHistory(); loadRecent(); }
+  if (S.page === "events") loadEvents();
+  if (S.page === "vars") loadVars();
+  if ($("#sheet").classList.contains("on")) { renderData(); renderAbout(); }
+}
+
+function schedule() {
+  clearTimeout(S.timer);
+  const iv = (S.status && S.status.meta && S.status.meta.poll) ? Math.max(3, S.status.meta.poll) : 5;
+  S.timer = setTimeout(async () => {
+    if (!S.hidden) await refreshOnce();
+    schedule();
+  }, iv * 1000);
+}
+
+$("#btnRefresh").onclick = async e => {
+  const b = e.currentTarget;
+  b.style.transform = "rotate(360deg)";
+  b.style.transition = "transform .5s var(--ease)";
+  setTimeout(() => { b.style.transform = ""; b.style.transition = ""; }, 520);
+  await refreshOnce();
+  toast("已刷新");
+};
+
+document.addEventListener("visibilitychange", () => {
+  S.hidden = document.hidden;
+  if (!S.hidden) refreshOnce();
+});
+
+$("#metricSeg").onclick = e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  $$("#metricSeg button").forEach(x => x.classList.toggle("on", x === b));
+  S.metric = b.dataset.m;
+  loadHistory();
+};
+$("#rangeSeg").onclick = e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  $$("#rangeSeg button").forEach(x => x.classList.toggle("on", x === b));
+  S.range = b.dataset.r;
+  loadHistory();
+};
+
+let rz = null;
+window.addEventListener("resize", () => {
+  clearTimeout(rz);
+  rz = setTimeout(() => { if (S.page === "overview" && S.hist) drawChart(S.hist.points || [], METRIC_DEF[S.metric], S.range); }, 160);
+});
+
+/* ---------------- 启动 ---------------- */
+(async function boot() {
+  const h = location.hash.replace("#", "");
+  if (PAGES.includes(h)) go(h, true);
+  await refreshOnce();
+  schedule();
+  // 启动时静默检查一次更新
+  try {
+    const cfg = await api("/api/settings");
+    if (cfg && cfg.ok && cfg.config && cfg.config.auto_check_update) {
+      const u = await api("/api/update/check");
+      S.upd = u;
+      if (u && u.ok && u.newer) toast("发现新版本 " + u.latest + "，可在设置中更新", 4000);
+    }
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>

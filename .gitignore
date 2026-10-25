@@ -1,0 +1,27 @@
+# 构建产物
+dist/
+*.fpk
+*.sha256
+
+# 运行数据
+data/
+*.db
+*.db-wal
+*.db-shm
+*.log
+backup/
+
+# 调试页面（不进发布包）
+app/www/diag.html
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
