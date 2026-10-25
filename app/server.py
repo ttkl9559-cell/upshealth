@@ -44,7 +44,7 @@ from html import unescape
 
 APP_NAME = "upshealth"
 APP_CN = "UPS 健康"
-FALLBACK_VERSION = "1.2.0"
+FALLBACK_VERSION = "1.2.1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.environ.get("TRIM_APPDEST") or os.path.dirname(HERE)

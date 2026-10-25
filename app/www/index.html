@@ -729,9 +729,9 @@ const S = {
 };
 
 const METRIC_DEF = {
-  in_v:  { label: "输入电压", unit: "V",  key: "in_v",  digits: 1, minSpan: 20 },
-  out_v: { label: "输出电压", unit: "V",  key: "out_v", digits: 1, minSpan: 20 },
-  load:  { label: "负载率",   unit: "%",  key: "load",  digits: 0, minSpan: 20 },
+  in_v:  { label: "输入电压", unit: "V",  key: "in_v",  digits: 1, minSpan: 20, skipZero: true },
+  out_v: { label: "输出电压", unit: "V",  key: "out_v", digits: 1, minSpan: 20, skipZero: true },
+  load:  { label: "负载率",   unit: "%",  key: "load",  digits: 0, minSpan: 20, skipZero: true },
   chg:   { label: "电池电量", unit: "%",  key: "chg",   digits: 0, minSpan: 20 },
   rt:    { label: "剩余续航", unit: "分", key: "rt",    digits: 1, div: 60, minSpan: 5 },
   temp:  { label: "电池温度", unit: "℃", key: "temp",  digits: 1, minSpan: 5 },
@@ -1080,18 +1080,22 @@ function drawChart(points, def, range) {
   const pts = [];
   for (const p of points) {
     let v = p[def.key];
-    if (v === null || v === undefined) continue;
+    if (v === null || v === undefined) { pts.push([p.ts, null]); continue; }
     v = num(v);
-    if (v === null) continue;
+    if (v === null) { pts.push([p.ts, null]); continue; }
     if (def.div) v = v / def.div;
+    // 断电期间 input.voltage 就是 0 —— 那是「没有市电」，不是「电压掉到零」。
+    // 照实画成 0 会把 Y 轴拽进负数区间，曲线看着像电压崩了。留成断口更诚实。
+    if (def.skipZero && v <= 0) { pts.push([p.ts, null]); continue; }
     pts.push([p.ts, v]);
   }
-  if (!pts.length) {
+  const valid = pts.filter(p => p[1] !== null);
+  if (!valid.length) {
     wrap.innerHTML = '<div class="chart-empty">该区间暂无数据</div>';
     return;
   }
-  let mn = Math.min(...pts.map(p => p[1]));
-  let mx = Math.max(...pts.map(p => p[1]));
+  let mn = Math.min(...valid.map(p => p[1]));
+  let mx = Math.max(...valid.map(p => p[1]));
   // 最小可视跨度：避免 0.7 V 的微小波动被 Y 轴放大成「断崖」，误导判断
   const ms = def.minSpan || 0;
   if (mx - mn < ms) { const c = (mx + mn) / 2; mn = c - ms / 2; mx = c + ms / 2; }
@@ -1131,16 +1135,31 @@ function drawChart(points, def, range) {
       'font-family="var(--font-mono)" font-size="9.5" fill="var(--ink-3)">' + lbl + "</text>";
   }
 
-  // 折线 + 面积
+  // 折线 + 面积；按断口切成多段，断电区间不连线
   const step = Math.max(1, Math.floor(pts.length / (iw * 1.6)));
   const sampled = [];
   for (let i = 0; i < pts.length; i += step) sampled.push(pts[i]);
   if (sampled[sampled.length - 1] !== pts[pts.length - 1]) sampled.push(pts[pts.length - 1]);
 
-  let d = "";
-  sampled.forEach(([t, v], i) => { d += (i ? " L" : "M") + X(t).toFixed(1) + "," + Y(v).toFixed(1); });
-  const area = d + " L" + X(sampled[sampled.length - 1][0]).toFixed(1) + "," + (padT + ih) +
-    " L" + X(sampled[0][0]).toFixed(1) + "," + (padT + ih) + " Z";
+  const segs = [];
+  let cur = [];
+  for (const [t, v] of sampled) {
+    if (v === null) { if (cur.length) { segs.push(cur); cur = []; } continue; }
+    cur.push([t, v]);
+  }
+  if (cur.length) segs.push(cur);
+
+  const segPath = seg => seg.map(([t, v], i) =>
+    (i ? " L" : "M") + X(t).toFixed(1) + "," + Y(v).toFixed(1)).join("");
+  let d = "", area = "";
+  for (const seg of segs) {
+    if (!seg.length) continue;
+    d += segPath(seg);
+    area += segPath(seg) +
+      " L" + X(seg[seg.length - 1][0]).toFixed(1) + "," + (padT + ih) +
+      " L" + X(seg[0][0]).toFixed(1) + "," + (padT + ih) + " Z";
+  }
+  const lastPt = valid[valid.length - 1];
 
   const gid = "ga" + Math.random().toString(36).slice(2, 8);
   wrap.innerHTML =
@@ -1152,8 +1171,8 @@ function drawChart(points, def, range) {
     '<path d="' + area + '" fill="url(#' + gid + ')"/>' +
     '<path d="' + d + '" fill="none" stroke="var(--ink-1)" stroke-width="1.6" ' +
     'stroke-linejoin="round" stroke-linecap="round"/>' +
-    '<circle cx="' + X(sampled[sampled.length - 1][0]).toFixed(1) + '" cy="' +
-    Y(sampled[sampled.length - 1][1]).toFixed(1) + '" r="3" fill="var(--ink-1)"/>' +
+    '<circle cx="' + X(lastPt[0]).toFixed(1) + '" cy="' +
+    Y(lastPt[1]).toFixed(1) + '" r="3" fill="var(--ink-1)"/>' +
     "</svg>" +
     '<div class="chart-tip" id="chartTip"></div>';
 
@@ -1166,6 +1185,7 @@ function drawChart(points, def, range) {
     const tt = t0 + (px - padL) / iw * spanT;
     let best = null, bd = Infinity;
     for (const [t, v] of pts) {
+      if (v === null) continue;          // 断口上没有值，别把鼠标吸过去显示 0
       const dd = Math.abs(t - tt);
       if (dd < bd) { bd = dd; best = [t, v]; }
     }
@@ -1197,6 +1217,7 @@ async function loadHistory() {
       let v = num(p[def.key]);
       if (v === null) continue;
       if (def.div) v /= def.div;
+      if (def.skipZero && v <= 0) continue;   // 与曲线一致：断电的 0 不算「最低电压」
       mn = mn === null ? v : Math.min(mn, v);
       mx = mx === null ? v : Math.max(mx, v);
     }
