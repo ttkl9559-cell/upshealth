@@ -37,7 +37,7 @@ from urllib.error import URLError, HTTPError
 
 APP_NAME = "upshealth"
 APP_CN = "UPS 健康"
-FALLBACK_VERSION = "1.0.0"
+FALLBACK_VERSION = "1.0.1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.environ.get("TRIM_APPDEST") or os.path.dirname(HERE)
@@ -1116,11 +1116,19 @@ def check_update(force=False):
             if (a["name"] or "").lower().endswith(".fpk"):
                 fpk = a
                 break
+    # sha256 附件必须与选中的 fpk 严格同名（多架构包里不能串）
     sha = None
-    for a in assets:
-        if (a["name"] or "").lower().endswith(".sha256"):
-            sha = a
-            break
+    if fpk and fpk.get("name"):
+        want = (fpk["name"] + ".sha256").lower()
+        for a in assets:
+            if (a["name"] or "").lower() == want:
+                sha = a
+                break
+    if not sha:
+        for a in assets:
+            if (a["name"] or "").lower().endswith(".sha256"):
+                sha = a
+                break
 
     newer = ver_tuple(latest) > ver_tuple(VERSION)
     return {
