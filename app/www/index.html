@@ -324,6 +324,37 @@ a{color:inherit;text-decoration:none}
 .banner .bt{font-weight:650;margin-bottom:2px}
 .banner .bd{line-height:1.55}
 .banner code{font:11.5px/1.4 var(--font-mono);background:rgba(128,128,128,.14);padding:1px 5px;border-radius:4px;word-break:break-all}
+.banner .bact{margin-left:auto;flex:0 0 auto;align-self:center;white-space:nowrap}
+.banner .bt b{font-variant-numeric:tabular-nums}
+/* ---------- 关机保护 ---------- */
+.gcard{border-radius:var(--r-md);padding:12px 14px;margin-top:11px;font-size:12.5px;line-height:1.6}
+.gcard.ok{background:var(--ok-soft);color:var(--ok)}
+.gcard.warn{background:var(--warn-soft);color:var(--warn)}
+.gcard.crit{background:var(--crit-soft);color:var(--crit)}
+.gcard.info{background:var(--fill-1);color:var(--ink-2)}
+.gcard .gt{font-weight:650;display:flex;align-items:center;gap:7px}
+.gcard .gt svg{width:14px;height:14px;flex:0 0 auto}
+.gcard .gv{margin-top:5px;color:inherit;opacity:.92}
+.gitem{margin-top:9px;padding-top:9px;border-top:1px solid rgba(128,128,128,.2);font-size:12px}
+.gitem .gh{font-weight:600}
+.gitem .gd{margin-top:3px;line-height:1.55;opacity:.9}
+.gitem .gf{margin-top:4px;opacity:.85}
+.gitem .gf::before{content:"→ ";font-weight:600}
+.gnum{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:11px}
+.gnum .gfld{background:var(--fill-1);border-radius:var(--r-sm);padding:9px 11px}
+.gnum .gfld .gn{font:500 10.5px/1.3 var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.gnum .gfld .grow{display:flex;align-items:baseline;gap:5px;margin-top:4px}
+.gnum .gfld input{flex:1;min-width:0;border:none;background:transparent;font:600 15px/1.2 var(--font-display);color:var(--ink-1);font-variant-numeric:tabular-nums;padding:0}
+.gnum .gfld .gu{font:500 11px/1 var(--font-mono);color:var(--ink-3)}
+.gstate{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin-top:11px;font-size:12.5px;color:var(--ink-2)}
+.gstate .gk{color:var(--ink-3);font-size:11.5px}
+.gstate b{font-variant-numeric:tabular-nums}
+.gacts{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}
+.chip2{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 13px;border-radius:999px;
+  background:var(--fill-1);color:var(--ink-2);font:500 12.5px/1 var(--font-sans);cursor:pointer;
+  border:1px solid transparent;transition:.18s var(--ease)}
+.chip2.on{background:var(--ink-1);color:var(--bg);border-color:var(--ink-1)}
+.chip2.danger.on{background:var(--crit);border-color:var(--crit);color:#fff}
 
 .toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,20px);opacity:0;pointer-events:none;
   background:var(--ink-1);color:var(--bg);padding:12px 20px;border-radius:var(--r-pill);
@@ -431,6 +462,7 @@ a{color:inherit;text-decoration:none}
     <!-- ================= 总览 ================= -->
     <section class="page on" id="page-overview">
       <div id="bannerZone"></div>
+      <div id="guardBar"></div>
       <div class="hero" style="margin-top:0">
         <div class="hero-l">
           <div class="kicker">剩余续航</div>
@@ -687,6 +719,16 @@ a{color:inherit;text-decoration:none}
       <div id="notifyZone"></div>
     </div>
 
+    <div class="sheet-sec" id="secGuard">关机保护</div>
+    <div class="card tight">
+      <div class="field">
+        <div class="field-l"><div class="nm">低电自动关机</div>
+          <div class="hint">断电后电量降到阈值，先推送、留宽限期，再安全关机。默认关闭</div></div>
+        <div class="sw" id="setGuard"></div>
+      </div>
+      <div id="guardZone"></div>
+    </div>
+
     <div class="sheet-sec">数据</div>
     <div class="card tight">
       <div id="dataZone"></div>
@@ -754,6 +796,13 @@ const EV_STYLE = {
   VARS_CHANGED:    { cls: "warn", icon: "i-list" },
   CHARGE_JUMP:     { cls: "warn", icon: "i-batt" },
   UPDATE:          { cls: "ok",   icon: "i-down" },
+  GUARD_ARMED:     { cls: "crit", icon: "i-alert" },
+  GUARD_CANCEL:    { cls: "ok",   icon: "i-check" },
+  GUARD_ALERT:     { cls: "crit", icon: "i-batt" },
+  GUARD_SHUTDOWN:  { cls: "crit", icon: "i-alert" },
+  GUARD_FAILED:    { cls: "crit", icon: "i-alert" },
+  GUARD_CONFLICT:  { cls: "warn", icon: "i-plug" },
+  GUARD_CLEAR:     { cls: "ok",   icon: "i-check" },
 };
 
 /* ---------------- 工具 ---------------- */
@@ -878,6 +927,13 @@ window.addEventListener("hashchange", () => go(location.hash.replace("#", ""), t
 /* ---------------- 总览渲染 ---------------- */
 function renderStatus(j) {
   S.status = j;
+  // 关机保护：总览上的倒计时条要跟着每次轮询走
+  if (j && j.guard) {
+    const prevSig = S.guardSig;
+    takeGuard(j.guard);
+    renderGuardBar();
+    if ($("#sheet").classList.contains("on") && S.guardSig !== prevSig) renderGuardPanel();
+  }
   const live = j.live || {}, dev = j.device || {}, h = j.health || {};
   const pill = $("#livePill"), txt = $("#liveText");
   const dot = $("#sideDot");
@@ -1509,6 +1565,7 @@ async function loadSettings() {
   $("#setMirror").value = c.update_mirror || "";
   $("#setAutoUpd").classList.toggle("on", !!c.auto_check_update);
   loadNotify(j);
+  loadGuard();
   renderUpdate();
   renderData();
   renderAbout();
@@ -1840,6 +1897,259 @@ $("#btnDoUpd").onclick = async e => {
   }
 };
 
+/* ---------------- 关机保护 ---------------- */
+function durShort(s) {
+  s = Math.max(0, Math.round(num(s) || 0));
+  if (s < 60) return s + " 秒";
+  const m = Math.floor(s / 60), r = s % 60;
+  if (m < 60) return m + " 分" + (r ? " " + r + " 秒" : "");
+  return Math.floor(m / 60) + " 小时" + (m % 60 ? " " + (m % 60) + " 分" : "");
+}
+
+function guardLeft(g) {
+  if (!g || g.left_s === null || g.left_s === undefined) return 0;
+  const drift = S.guardAt ? (Date.now() - S.guardAt) / 1000 : 0;
+  return Math.max(0, Math.round(g.left_s - drift));
+}
+
+function takeGuard(g) {
+  S.guard = g;
+  S.guardAt = Date.now();
+  S.guardSig = [g.state, (g.conflicts || {}).risk, !!g.enabled, !!g.cancel_left_s].join("|");
+}
+
+async function loadGuard() {
+  const g = await api("/api/guard");
+  if (!g || !g.ok) return;
+  takeGuard(g);
+  renderGuardPanel();
+  renderGuardBar();
+}
+
+/* 总览页：倒计时条 + 一键取消 */
+function renderGuardBar() {
+  const z = $("#guardBar"), g = S.guard;
+  if (!z) return;
+  if (!g || !g.enabled) { z.innerHTML = ""; return; }
+
+  const st = g.state || "idle";
+  let kind = null, title = "", body = "", act = null;
+
+  if (st === "armed") {
+    kind = "crit";
+    if (g.mode === "shutdown") {
+      title = "关机保护已启动";
+      body = "电量低于 " + fmt(g.low_pct, 0) + "%，<b id=\"gLeft\">" +
+        durShort(guardLeft(g)) + "</b> 后执行关机。市电恢复或点右侧按钮都会中止。";
+    } else {
+      title = "低电告警已触发（未关机）";
+      body = "电量低于 " + fmt(g.low_pct, 0) + "%，当前是「只告警」模式，不会关机。";
+    }
+    act = { k: "cancel", label: "取消关机" };
+  } else if (st === "alerted") {
+    kind = "crit";
+    title = "电量已低于告警线";
+    body = "已推送告警但未关机（只告警模式）。电池耗尽时 NAS 会直接断电，请尽快恢复市电。";
+  } else if (st === "blocked") {
+    kind = "warn";
+    title = "自动关机被拦下了";
+    body = esc(g.note || "检测到飞牛侧也在管这台 UPS，为避免重复关机已阻止执行。") +
+      ' <a href="#" data-gact="open" style="text-decoration:underline">查看冲突详情</a>';
+  } else if (st === "held" && g.boot_hold_left > 0) {
+    kind = "info";
+    title = "关机保护处于启动静默期";
+    body = "服务刚启动，" + durShort(g.boot_hold_left) + " 内不会执行关机（防止反复重启被反复关掉）。";
+  }
+  if (!kind) { z.innerHTML = ""; return; }
+
+  const ic = kind === "crit" ? "i-alert" : kind === "warn" ? "i-alert" : "i-clock";
+  z.innerHTML = '<div class="banner ' + kind + '" style="margin-bottom:13px">' +
+    '<svg><use href="#' + ic + '"/></svg><div style="flex:1;min-width:0">' +
+    '<div class="bt">' + esc(title) + '</div><div class="bd">' + body + '</div></div>' +
+    (act ? '<button class="btn sm bact" data-gact="' + act.k + '">' + esc(act.label) + "</button>" : "") +
+    "</div>";
+}
+
+/* 设置抽屉：开关、阈值、冲突检测 */
+function renderGuardPanel() {
+  const z = $("#guardZone"), g = S.guard;
+  if (!z || !g) return;
+  const c = g.conflicts || {};
+  const items = c.items || [];
+  const risk = c.risk || "none";
+  const blocked = !!c.block_shutdown && !g.allow_conflict;
+
+  $("#setGuard").classList.toggle("on", !!g.enabled);
+
+  let h = "";
+  // ---- 冲突检测 ----
+  const rk = risk === "high" ? "crit" : risk === "medium" ? "warn" : "ok";
+  const ri = risk === "none" ? "i-check" : "i-alert";
+  h += '<div class="gcard ' + rk + '"><div class="gt"><svg><use href="#' + ri + '"/></svg>' +
+    "飞牛 / NUT 冲突检测 · " + (risk === "none" ? "无冲突" : risk === "high" ? "高危" : "注意") +
+    "</div><div class=\"gv\">" + esc(c.verdict_cn || "") + "</div>";
+  items.forEach(it => {
+    const col = it.level === "high" ? "var(--crit)"
+      : (it.level === "medium" || it.level === "warn") ? "var(--warn)" : "var(--ink-3)";
+    h += '<div class="gitem"><div class="gh" style="color:' + col + '">' +
+      esc(it.title) + '</div><div class="gd">' + esc(it.detail) + "</div>" +
+      (it.fix ? '<div class="gf">' + esc(it.fix) + "</div>" : "") + "</div>";
+  });
+  const fn = c.fnos || {}, nu = c.nut || {};
+  if (fn.available) {
+    h += '<div class="gitem"><div class="gd">' +
+      "飞牛侧读到的值：<code>enable = " + (fn.enable ? "true" : "false") +
+      "</code>、<code>shutdown-ups.enabled = " + (fn.shutdown_ups ? "true" : "false") +
+      "</code><br>" + esc(fn.path) + "<br>" +
+      "upsmon：进程 " + ((nu.pids || []).length) + " 个、MONITOR " +
+      ((nu.monitors || []).length) + " 条、upssched " +
+      (nu.upssched_ready ? "已配置" : "未配置") +
+      "</div></div>";
+  }
+  h += "</div>";
+
+  // ---- 模式 ----
+  h += '<div class="chipset" style="margin-top:12px">' +
+    '<button class="chip2' + (g.mode === "notify" ? " on" : "") + '" data-gmode="notify">只告警</button>' +
+    '<button class="chip2 danger' + (g.mode === "shutdown" ? " on" : "") +
+    (blocked ? " disabled" : "") + '" data-gmode="shutdown"' +
+    (blocked ? ' title="先关掉飞牛侧的 UPS 保护"' : "") + ">自动关机</button></div>";
+
+  // ---- 阈值 ----
+  h += '<div class="gnum">' +
+    gnum("gdLow", "触发线", g.low_pct, "%", "电量降到该值开始倒计时") +
+    gnum("gdCrit", "紧急线", g.crit_pct, "%", "降到该值把宽限压到 30 秒") +
+    gnum("gdGrace", "宽限期", g.grace_s, "秒", "给来电和你反应的时间") +
+    gnum("gdMinOb", "确认期", g.min_ob_s, "秒", "必须在电池上撑满才认") +
+    "</div>";
+
+  // ---- 当前状态 ----
+  let s = '<div class="gstate"><span class="gk">当前状态</span><b>' +
+    esc(g.state_cn || g.state) + "</b>";
+  if (g.on_batt_s) s += '<span class="gk">电池供电</span><b>' + durShort(g.on_batt_s) + "</b>";
+  if (g.cancel_left_s) s += '<span class="gk">取消静默</span><b>' + durShort(g.cancel_left_s) + "</b>";
+  if (g.boot_hold_left) s += '<span class="gk">启动静默</span><b>' + durShort(g.boot_hold_left) + "</b>";
+  s += "</div>";
+  if (g.note) s += '<div class="hint" style="margin-top:6px">' + esc(g.note) + "</div>";
+  if (g.last_fire && g.last_fire.fired_at) {
+    const d = new Date(g.last_fire.fired_at * 1000);
+    s += '<div class="hint" style="margin-top:6px">上次执行关机：' +
+      d.toLocaleString("zh-CN", { hour12: false }) + "，当时电量 " +
+      fmt(g.last_fire.charge, 0) + "%、电池供电 " + durShort(g.last_fire.on_batt_s) + "</div>";
+  }
+  h += s;
+
+  h += '<div class="gacts">' +
+    '<button class="btn pri sm" id="btnSaveGuard">保存</button>' +
+    (g.state === "armed" || g.state === "alerted"
+      ? '<button class="btn sm" id="btnCancelGuard">立即取消关机</button>' : "") +
+    '<button class="btn sm" id="btnSimGuard">演练一次</button>' +
+    '<button class="btn sm" id="btnRecheck">重新检测冲突</button>' +
+    "</div>";
+  h += '<div class="hint" style="margin-top:9px">关机走 <code class="mono-sm">' +
+    esc(g.cmd || "shutdown -h now") +
+    "</code> 关掉 NAS 本身，不会切断 UPS 输出——那样来电后无法自动开机。</div>";
+
+  z.innerHTML = h;
+}
+
+function gnum(id, label, val, unit, hint) {
+  return '<div class="gfld"><div class="gn" title="' + esc(hint) + '">' + esc(label) +
+    '</div><div class="grow"><input id="' + id + '" type="number" value="' +
+    (val === null || val === undefined ? "" : val) + '"><span class="gu">' +
+    esc(unit) + "</span></div></div>";
+}
+
+function guardPatch() {
+  return {
+    guard_low_pct: num($("#gdLow").value),
+    guard_crit_pct: num($("#gdCrit").value),
+    guard_grace_s: num($("#gdGrace").value),
+    guard_min_ob_s: num($("#gdMinOb").value),
+  };
+}
+
+async function saveGuard(patch, quiet) {
+  const j = await post("/api/guard/save", patch);
+  if (j && j.ok) {
+    takeGuard(j);
+    renderGuardPanel();
+    renderGuardBar();
+    if (!quiet) toast("已保存");
+  } else {
+    toast((j && j.error) || "保存失败");
+    if (j && j.conflicts) { takeGuard(j.guard || S.guard); renderGuardPanel(); }
+  }
+  return j;
+}
+
+$("#setGuard").onclick = e => {
+  const on = !e.currentTarget.classList.contains("on");
+  e.currentTarget.classList.toggle("on", on);
+  saveGuard({ guard_enabled: on }, true);
+};
+
+(function guardBind() {
+  const z = $("#guardZone");
+  if (!z) return;
+  z.addEventListener("click", async e => {
+    const md = e.target.closest("[data-gmode]");
+    if (md) {
+      if (md.classList.contains("disabled")) {
+        toast("飞牛侧的 UPS 保护还开着，先关掉再启用自动关机");
+        return;
+      }
+      const g = S.guard;
+      await saveGuard(Object.assign({ guard_mode: md.dataset.gmode }, guardPatch()), true);
+      if (S.guard) renderGuardPanel();
+      return;
+    }
+    if (e.target.closest("#btnSaveGuard")) {
+      await saveGuard(guardPatch());
+      return;
+    }
+    if (e.target.closest("#btnCancelGuard")) {
+      const j = await post("/api/guard/cancel", {});
+      if (j && j.ok) { takeGuard(j); renderGuardPanel(); renderGuardBar(); toast("已取消"); }
+      else toast((j && j.message) || "取消失败");
+      return;
+    }
+    if (e.target.closest("#btnRecheck")) {
+      const j = await api("/api/guard/check");
+      if (j && j.ok) { takeGuard(j); renderGuardPanel(); renderGuardBar(); toast("已重新检测"); }
+      return;
+    }
+    if (e.target.closest("#btnSimGuard")) {
+      const j = await post("/api/guard/sim", { start_charge: 60, drop: 6, steps: 20, step_s: 60 });
+      if (!j || !j.ok) { toast("演练失败"); return; }
+      const rows = j.rows || [];
+      const fire = rows.filter(r => r.state === "fire")[0];
+      toast(fire ? "演练：约 " + durShort(fire.t) + " 后会关机" : "演练：本次参数下不会触发关机");
+      return;
+    }
+  });
+})();
+
+$("#guardBar").addEventListener("click", async e => {
+  const b = e.target.closest("[data-gact]");
+  if (!b) return;
+  e.preventDefault();
+  if (b.dataset.gact === "cancel") {
+    const j = await post("/api/guard/cancel", {});
+    if (j && j.ok) { takeGuard(j); renderGuardPanel(); renderGuardBar(); toast("已取消关机"); }
+    else toast((j && j.message) || "取消失败");
+    return;
+  }
+  if (b.dataset.gact === "open") openSheet(true);
+});
+
+// 倒计时每秒走一格，别等 5 秒一次的轮询
+setInterval(() => {
+  const el = $("#gLeft");
+  if (!el || !S.guard) return;
+  el.textContent = durShort(guardLeft(S.guard));
+}, 1000);
+
 async function waitForRestart() {
   for (let i = 0; i < 40; i++) {
     await new Promise(r => setTimeout(r, 1200));
@@ -1960,7 +2270,15 @@ window.addEventListener("resize", () => {
   await refreshOnce();
   schedule();
   // 便于截图/排障：?sheet=1 直接打开设置抽屉
-  if (new URLSearchParams(location.search).get("sheet")) openSheet(true);
+  // 便于截图/排障：?sheet=1 直接打开设置抽屉；&focus=guardZone 滚到指定区块
+  if (new URLSearchParams(location.search).get("sheet")) {
+    openSheet(true);
+    const f = new URLSearchParams(location.search).get("focus");
+    if (f) setTimeout(() => {
+      const el = document.getElementById(f);
+      if (el) el.scrollIntoView({ block: "start" });
+    }, 700);
+  }
   // 启动时静默检查一次更新
   try {
     const cfg = await api("/api/settings");

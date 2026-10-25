@@ -40,6 +40,8 @@ jobs:
           python tools/power_test.py
           echo "--- 采集器行为（失联只记一条 / 无效帧剔除）"
           python tools/collector_test.py
+          echo "--- 关机保护（不该关的时候绝不关）"
+          python tools/guard_test.py
 
       - name: Build fpk (x86_64 + arm64)
         run: python build_fpk.py --both

@@ -22,6 +22,7 @@ import json
 import time
 import gzip
 import queue
+import shlex
 import shutil
 import smtplib
 import sqlite3
@@ -44,7 +45,7 @@ from html import unescape
 
 APP_NAME = "upshealth"
 APP_CN = "UPS 健康"
-FALLBACK_VERSION = "1.2.1"
+FALLBACK_VERSION = "1.3.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.environ.get("TRIM_APPDEST") or os.path.dirname(HERE)
@@ -274,6 +275,16 @@ DEFAULT_CFG = {
     "notify_max_per_min": 8,     # 全局限流
     "notify_quiet": "",          # 静音时段，如 "23:00-07:00"，留空不启用
     "notify_base_url": "",       # 通知里附带的访问地址，留空自动取本机
+    # ---- 关机保护 ----
+    # 默认全关。断电后要不要自动关机，只能由你自己决定，我们绝不默认替做。
+    "guard_enabled": False,
+    "guard_mode": "notify",      # notify = 只告警不动作；shutdown = 真的关机
+    "guard_low_pct": 25,         # 电量降到该值开始倒计时
+    "guard_crit_pct": 10,        # 降到该值把宽限期压缩到 30 秒
+    "guard_grace_s": 180,        # 宽限期，秒；期间来电或点取消都能中止
+    "guard_min_ob_s": 60,        # 必须在电池上连续多少秒才认（防切换抖动误判）
+    "guard_boot_hold_s": 300,    # 服务启动后多少秒内不动手（防重启循环关机）
+    "guard_allow_conflict": False,  # 明知飞牛也管着 UPS 仍要启用（高危，默认否）
 }
 
 
@@ -569,6 +580,10 @@ CREATE TABLE IF NOT EXISTS baselines(
                  ev.get("out_v"), ev.get("load"), ev.get("temp"), ev.get("note")))
             c.commit()
         # 入队即返回，真正的发送在通知线程里做
+        # no_push：关机这类「进程马上就要没了」的事件由调用方同步发，
+        # 走队列会随进程退出一起丢掉，重复投递又会发两遍。
+        if ev.get("no_push"):
+            return
         try:
             NOTIFIER.on_event(ev)
         except Exception as e:
@@ -886,6 +901,13 @@ EVENT_META = {
     "CHARGE_JUMP":     ("电量计异常跳变", "warn"),
     "DEVICE_LOST":     ("UPS 失联", "crit"),
     "DEVICE_BACK":     ("UPS 恢复通信", "ok"),
+    "GUARD_ARMED":     ("关机保护待执行", "crit"),
+    "GUARD_CANCEL":    ("关机保护已取消", "ok"),
+    "GUARD_ALERT":     ("低电告警（未关机）", "crit"),
+    "GUARD_SHUTDOWN":  ("正在执行关机", "crit"),
+    "GUARD_FAILED":    ("关机动作失败", "crit"),
+    "GUARD_CONFLICT":  ("与飞牛 UPS 设置冲突", "warn"),
+    "GUARD_CLEAR":     ("关机冲突已解除", "ok"),
     "DEVICE_CHANGED":  ("UPS 设备变化", "info"),
     "VARS_CHANGED":    ("变量集变化", "info"),
     "BLIND_SPOT":      ("观测盲区", "warn"),
@@ -900,6 +922,8 @@ NOTIFY_EVENT_CHOICES = [
     "POWER_LOSS", "POWER_RESTORE", "LOW_BATTERY", "REPLACE_BATTERY",
     "ALARM", "OVERLOAD", "FORCED_SHUTDOWN", "CHARGE_JUMP",
     "BLIND_SPOT", "DEVICE_LOST", "DEVICE_BACK", "DEVICE_CHANGED", "UPDATE",
+    "GUARD_ARMED", "GUARD_CANCEL", "GUARD_ALERT", "GUARD_SHUTDOWN",
+    "GUARD_FAILED", "GUARD_CONFLICT",
 ]
 
 LEVEL_TAG = {"crit": "【严重】", "warn": "【警告】", "ok": "【恢复】", "info": "【提示】"}
@@ -1250,6 +1274,636 @@ class Notifier:
 
 
 NOTIFIER = Notifier()
+
+
+# ======================================================================
+# 关机保护 · 飞牛 / NUT 冲突检测
+#
+# 断电后自动关机是整套软件里唯一「做错就直接停机」的动作，所以这一节的重点
+# 不是怎么关，而是先搞清楚**还有谁也会去关**。
+#
+# 飞牛把 UPS 设置写在这些文件里：
+#   /etc/nut/device.conf    enable / shutdown-ups.enabled / power-policy.*
+#   /etc/nut/upsmon.conf    NUT 自己的 upsmon，低电时执行 SHUTDOWNCMD
+#   /etc/nut/upssched.conf  upssched 定时器，要有 CMDSCRIPT 才生效
+#
+# 任意一处还在管，都可能和本应用在同一时刻各关一次；飞牛改设置时还会重写
+# upsmon.conf 并重启 nut 服务，那一瞬间 upsc 会失败，读数跟着断。
+# ======================================================================
+FNOS_DEVICE_CONF = "/etc/nut/device.conf"
+NUT_UPSMON_CONF = "/etc/nut/upsmon.conf"
+NUT_UPSSCHED_CONF = "/etc/nut/upssched.conf"
+
+GUARD_STATE_CN = {
+    "idle":     "待命",
+    "held":     "启动静默期",
+    "watching": "观察中",
+    "unknown":  "电量未知",
+    "armed":    "待执行关机",
+    "alerted":  "已告警（未关机）",
+    "fired":    "已执行",
+    "blocked":  "被冲突挡住",
+}
+
+
+def _conf_kv(path):
+    """解析飞牛这种 `key = value` 配置。读不到返回 None（不是空 dict）。"""
+    out = {}
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                s = line.strip()
+                if not s or s.startswith("#") or "=" not in s:
+                    continue
+                k, v = s.split("=", 1)
+                out[k.strip()] = v.strip()
+    except Exception:
+        return None
+    return out
+
+
+def _procs_named(names):
+    """按可执行文件名扫 /proc 找进程。不依赖 pgrep，也不引入 psutil。"""
+    want = set(names)
+    out = []
+    try:
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open("/proc/%s/cmdline" % pid, "rb") as f:
+                    raw = f.read()
+            except Exception:
+                continue
+            if not raw:
+                continue
+            argv0 = raw.split(b"\x00", 1)[0].decode("utf-8", "replace")
+            if os.path.basename(argv0) in want:
+                out.append(int(pid))
+    except Exception:
+        pass
+    return sorted(out)
+
+
+def fnos_ups_state():
+    """飞牛自带 UPS 设置的真实状态。"""
+    kv = _conf_kv(FNOS_DEVICE_CONF)
+    if kv is None:
+        return {"available": False, "path": FNOS_DEVICE_CONF,
+                "reason": "读不到 %s（应用可能不是 root，或系统未启用 NUT）" % FNOS_DEVICE_CONF}
+
+    def b(k):
+        return str(kv.get(k, "")).strip().lower() in ("true", "1", "yes", "on")
+
+    try:
+        mtime = int(os.path.getmtime(FNOS_DEVICE_CONF))
+    except Exception:
+        mtime = 0
+    return {
+        "available": True,
+        "path": FNOS_DEVICE_CONF,
+        "enable": b("enable"),
+        "shutdown_ups": b("shutdown-ups.enabled"),
+        "policy_type": kv.get("power-policy.type") or "",
+        "policy_value": kv.get("power-policy.value") or "",
+        "onbatt_min_battery": kv.get("power-policy.onbattMinimumBattery") or "",
+        "device": kv.get("last-device.name") or "",
+        "mtime": mtime,
+    }
+
+
+def nut_upsmon_state():
+    """NUT 自带的 upsmon 是否还能动手，以及它被配成低电时执行什么。
+
+    光看进程在不在不够：upsmon 必须有 MONITOR 行才知道该盯哪台 UPS。
+    MONITOR 被清空时进程仍然活着，但它手里没有监控对象，永远不会触发关机
+    —— 飞牛关闭 UPS 功能后就是这个状态，所以不能一律报风险。
+    """
+    out = {"running": False, "pids": [], "readable": False, "monitors": [],
+           "minsupplies": None, "shutdown_cmd": "", "notify_cmd": "",
+           "upssched_ready": False, "upssched_bytes": 0}
+    out["pids"] = _procs_named(("upsmon",))
+    out["running"] = bool(out["pids"])
+
+    try:
+        with open(NUT_UPSMON_CONF, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        out["readable"] = True
+    except Exception:
+        lines = []
+
+    for line in lines:
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        kw, _, rest = s.partition(" ")
+        kw = kw.upper()
+        rest = rest.strip()
+        if kw == "MINSUPPLIES":
+            try:
+                out["minsupplies"] = int(rest.split()[0])
+            except Exception:
+                pass
+        elif kw == "SHUTDOWNCMD":
+            out["shutdown_cmd"] = rest.strip('"')
+        elif kw == "NOTIFYCMD":
+            out["notify_cmd"] = rest.strip('"')
+        elif kw == "MONITOR":
+            out["monitors"].append(rest)
+
+    # upssched 必须同时有 CMDSCRIPT 才会真的按点执行动作；空文件等于没配
+    try:
+        with open(NUT_UPSSCHED_CONF, "r", encoding="utf-8", errors="replace") as f:
+            txt = f.read()
+        out["upssched_bytes"] = len(txt)
+        out["upssched_ready"] = ("CMDSCRIPT" in txt.upper())
+    except Exception:
+        pass
+    return out
+
+
+def guard_conflicts():
+    """汇总「谁还会在低电时动手」。每次调用都重新读盘，结果由调用方缓存。"""
+    fn = fnos_ups_state()
+    nut = nut_upsmon_state()
+    items = []
+
+    def add(level, key, title, detail, fix):
+        items.append({"level": level, "key": key, "title": title,
+                      "detail": detail, "fix": fix})
+
+    if fn.get("available"):
+        if fn.get("enable"):
+            add("high", "fnos_enable", "飞牛 UPS 功能开着",
+                "飞牛会接管 /etc/nut/upsmon.conf，你每次改它的设置都会重启 nut 服务，"
+                "那一刻 upsc 会失败、读数会断一截；两套逻辑同时判断低电，等于各关一次。",
+                "飞牛「设置 → 硬件与电源 → UPS」里关掉 UPS 支持")
+        if fn.get("shutdown_ups"):
+            add("high", "fnos_shutdown", "飞牛「断电后自动关机」开着",
+                "市电断开后飞牛会按自己的策略关机，当前策略 %s = %s%s。"
+                "它的判据和时机跟本应用完全独立，两边都会想关。"
+                % (fn.get("policy_type") or "（未设置）",
+                   fn.get("policy_value") or "0",
+                   ("，最低电量门槛 %s%%" % fn["onbatt_min_battery"])
+                   if fn.get("onbatt_min_battery") not in ("", "0", None) else ""),
+                "关掉飞牛的断电自动关机，只留一套判断")
+    else:
+        add("warn", "fnos_unknown", "读不到飞牛 UPS 配置",
+            fn.get("reason") or "无法读取 /etc/nut/device.conf",
+            "本应用需要以 root 运行才能做这项检查；请在应用中心确认权限后重启应用")
+
+    if nut.get("running"):
+        mons = nut.get("monitors") or []
+        if mons:
+            extra = ("MINSUPPLIES = %s。" % nut["minsupplies"]) \
+                if nut.get("minsupplies") is not None else ""
+            add("medium", "nut_upsmon", "NUT 的 upsmon 还在盯着 UPS",
+                "它配了 %d 条 MONITOR，低电时会执行 %s。%s电池进入低电状态时，"
+                "它可能比本应用更早动手。" % (len(mons),
+                                        nut.get("shutdown_cmd") or "（未配置关机命令）", extra),
+                "若只打算由本应用来关，确认飞牛 UPS 关闭后 upsmon 随之停止；"
+                "本应用不会去停它——那会连带关掉飞牛自身的 UPS 告警")
+        else:
+            add("info", "nut_upsmon_idle", "upsmon 在跑但没有监控对象",
+                "进程还在（%d 个），但 upsmon.conf 里一条 MONITOR 都没有——"
+                "它手里没有要盯的 UPS，不会触发关机。飞牛关掉 UPS 功能后就是这个状态。"
+                % len(nut.get("pids") or []),
+                "无需处理")
+    if nut.get("upssched_ready"):
+        add("medium", "nut_upssched", "upssched 定时器有脚本",
+            "upssched.conf 里配了 CMDSCRIPT，说明存在按时间触发的自定义动作，"
+            "常见的用法就是「断电 N 分钟后关机」。",
+            "看一眼 /etc/nut/upssched.conf 和它调用的脚本，确认没有和本应用重复的关机")
+
+    highs = [i for i in items if i["level"] == "high"]
+    meds = [i for i in items if i["level"] == "medium"]
+    risk = "high" if highs else ("medium" if meds else "none")
+    verdict = {
+        "none": "没检测到别人也在管这台 UPS，本应用可以独自接管关机判断。",
+        "medium": "NUT 里还有会动手的链路，能用，但建议确认后再开「自动关机」。",
+        "high": "飞牛那边的 UPS 保护还开着，两边一起跑会各关一次。先关掉飞牛那侧再启用。",
+    }[risk]
+    return {
+        "checked_at": int(time.time()),
+        "risk": risk,
+        "items": items,
+        "fnos": fn,
+        "nut": nut,
+        "block_shutdown": bool(highs),
+        "verdict_cn": verdict,
+    }
+
+
+# ======================================================================
+# 关机保护 · 状态机
+#
+# 原则：宁可关不掉，也不能关错。
+#   · 默认关闭，必须手动打开
+#   · 必须在电池上连续 guard_min_ob_s 秒才认，防切换抖动
+#   · 切换瞬间的无效帧一律不参与判断
+#   · 宽限期内来电 / 点取消都能中止
+#   · 服务启动后 guard_boot_hold_s 秒内不动手，防重启循环关机
+#   · 真正下发前再复核一次快照新鲜度和电量
+#   · 只关 NAS（shutdown），绝不下 load.off 断 UPS 输出 —— 那样来电也无法自启
+# ======================================================================
+def guard_verdict(chg, on_batt, ob_for, cur_state, cfg):
+    """纯函数决策，方便单测。返回 (新状态, 动作, 说明)。
+
+    动作：None | 'reset' | 'cancel' | 'arm'
+    """
+    if not cfg.get("guard_enabled"):
+        return ("idle", "reset" if cur_state != "idle" else None, "关机保护未启用")
+
+    if not on_batt:
+        if cur_state == "armed":
+            return ("idle", "cancel", "市电恢复")
+        return ("idle", "reset" if cur_state != "idle" else None, "")
+
+    # 已经进入倒计时 / 已告警：只要还在电池上就不退出，电量回升也不退。
+    # 电量百分比本身就是估算值，来回抖是常态，跟着它反复进出比不判更危险。
+    if cur_state in ("armed", "alerted"):
+        return (cur_state, None, "")
+
+    low = float(cfg.get("guard_low_pct") or 25)
+    need = float(cfg.get("guard_min_ob_s") or 60)
+
+    if chg is None or chg <= 0:
+        return ("unknown", None, "电量读数不可用，不做判断")
+
+    if ob_for < need:
+        return ("watching", None, "电池供电 %d 秒，未满 %d 秒确认期" % (ob_for, need))
+
+    if chg > low:
+        return ("watching", None, "")
+
+    return ("armed", "arm", "电量 %.0f%% 已到触发线 %.0f%%" % (chg, low))
+
+
+class ShutdownGuard(object):
+    def __init__(self, store):
+        self.store = store
+        self.lock = threading.Lock()
+        self.state = "idle"
+        self.state_since = int(time.time())
+        self.note = ""
+        self.ob_since = None
+        self.armed_at = None
+        self.deadline = None
+        self.fired_at = None
+        self.alert_level = 0        # 0 未告警 / 1 低电告警 / 2 紧急告警
+        self.cancel_until = 0       # 手动取消后的静默截止
+        self.boot_at = int(time.time())
+        self.conflict_cache = None
+        self.conflict_ts = 0.0
+        self.conflict_risk = None
+        # 仅供自动化测试注入，不通过任何 HTTP 接口暴露
+        self.override_cmd = (os.environ.get("UPSHEALTH_GUARD_CMD") or "").strip()
+        self.last_fire = self._load_last_fire()
+
+    # ---------- 持久化：上次到底关没关 ----------
+    @property
+    def _state_path(self):
+        return os.path.join(DATA_DIR, "guard_last.json")
+
+    def _load_last_fire(self):
+        try:
+            with open(self._state_path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            return d if isinstance(d, dict) else None
+        except Exception:
+            return None
+
+    def _save_last_fire(self, d):
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            tmp = self._state_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self._state_path)
+            self.last_fire = d
+        except Exception as e:
+            log("关机记录写入失败：%s" % e, "warn")
+
+    # ---------- 冲突检测（60 秒缓存）----------
+    def conflicts(self, force=False):
+        now = time.time()
+        if not force and self.conflict_cache and now - self.conflict_ts < 60:
+            return self.conflict_cache
+        try:
+            c = guard_conflicts()
+        except Exception as e:
+            c = {"checked_at": int(now), "risk": "none", "items": [], "error": str(e),
+                 "block_shutdown": False, "verdict_cn": "冲突检测异常：%s" % e}
+        self.conflict_cache = c
+        self.conflict_ts = now
+        risk = c.get("risk")
+        prev = self.conflict_risk
+        self.conflict_risk = risk
+        if prev is not None and prev != risk:
+            self._risk_event(prev, risk)
+        return c
+
+    def _risk_event(self, prev, risk):
+        try:
+            if risk == "high" or (risk == "medium" and prev == "none"):
+                self.store.add_event({
+                    "ts": int(time.time()), "type": "GUARD_CONFLICT",
+                    "note": "冲突等级由「%s」变为「%s」，飞牛或 NUT 可能同时执行关机"
+                            % (_risk_cn(prev), _risk_cn(risk)),
+                })
+            elif prev in ("high", "medium") and risk in ("none", "medium"):
+                self.store.add_event({
+                    "ts": int(time.time()), "type": "GUARD_CLEAR",
+                    "note": "冲突等级由「%s」降为「%s」" % (_risk_cn(prev), _risk_cn(risk)),
+                })
+        except Exception as e:
+            log("冲突事件写入失败：%s" % e, "warn")
+
+    # ---------- 给前端的状态 ----------
+    def status(self):
+        now = int(time.time())
+        c = self.conflicts()
+        left = None
+        if self.state == "armed" and self.deadline:
+            left = max(0, int(self.deadline - now))
+        hold = max(0, int(self.boot_at + int(CFG.get("guard_boot_hold_s") or 300) - now))
+        return {
+            "enabled": bool(CFG.get("guard_enabled")),
+            "mode": (CFG.get("guard_mode") or "notify").lower(),
+            "low_pct": CFG.get("guard_low_pct"),
+            "crit_pct": CFG.get("guard_crit_pct"),
+            "grace_s": CFG.get("guard_grace_s"),
+            "min_ob_s": CFG.get("guard_min_ob_s"),
+            "boot_hold_s": CFG.get("guard_boot_hold_s"),
+            "allow_conflict": bool(CFG.get("guard_allow_conflict")),
+            "state": self.state,
+            "state_cn": GUARD_STATE_CN.get(self.state, self.state),
+            "state_since": self.state_since,
+            "note": self.note,
+            "on_batt_s": (now - self.ob_since) if self.ob_since else 0,
+            "left_s": left,
+            "deadline": self.deadline,
+            "boot_hold_left": hold,
+            "cancel_left_s": max(0, int(self.cancel_until - now)),
+            "alert_level": self.alert_level,
+            "fired_at": self.fired_at,
+            "last_fire": self.last_fire,
+            "cmd": " ".join(self._resolve_cmd() or []) or "",
+            "conflicts": c,
+        }
+
+    # ---------- 内部动作 ----------
+    def _set(self, st, note=""):
+        if st != self.state:
+            self.state = st
+            self.state_since = int(time.time())
+        if note:
+            self.note = note
+
+    def _reset(self, note=""):
+        self.state = "idle"
+        self.state_since = int(time.time())
+        self.deadline = None
+        self.armed_at = None
+        if note:
+            self.note = note
+
+    def _event(self, etype, snap, note, no_push=False):
+        live = (snap or {}).get("live") or {}
+        self.store.add_event({
+            "ts": int(time.time()), "type": etype,
+            "ups": ((snap or {}).get("device") or {}).get("name") or "",
+            "from_st": "", "to_st": live.get("status") or "",
+            "chg": live.get("chg"), "rt": live.get("rt"), "in_v": live.get("in_v"),
+            "out_v": live.get("out_v"), "load": live.get("load"),
+            "temp": live.get("temp"), "note": note, "no_push": no_push,
+        })
+
+    def _arm(self, chg, ob_for, snap):
+        grace = max(10, int(CFG.get("guard_grace_s") or 180))
+        self.armed_at = int(time.time())
+        self.deadline = self.armed_at + grace
+        self._set("armed", "电量 %.0f%%，%d 秒后执行" % (chg, grace))
+        self._event("GUARD_ARMED", snap,
+                    "电量 %.0f%%、电池供电 %d 秒，进入 %d 秒宽限期；"
+                    "期间来电或手动取消都会中止" % (chg, ob_for, grace))
+
+    def _cancel(self, why, snap):
+        had = self.state
+        self._reset(why)
+        self.deadline = None
+        self.alert_level = 0
+        self.note = why
+        if had in ("armed", "alerted"):
+            self._event("GUARD_CANCEL", snap, why)
+
+    def _want_level(self, chg):
+        crit = float(CFG.get("guard_crit_pct") or 10)
+        return 2 if (chg is not None and chg <= crit) else 1
+
+    def _resolve_cmd(self):
+        if self.override_cmd:
+            try:
+                return shlex.split(self.override_cmd)
+            except Exception:
+                return None
+        for cand in (["/sbin/shutdown", "-h", "now"],
+                     ["/usr/sbin/shutdown", "-h", "now"],
+                     ["/bin/systemctl", "poweroff"]):
+            if os.path.exists(cand[0]) and os.access(cand[0], os.X_OK):
+                return cand
+        return None
+
+    def _notify_sync(self, etype, snap, note):
+        """关机前必须同步推送：走队列的话进程一死，那条通知就永远发不出去。"""
+        if not CFG.get("notify_enabled"):
+            return
+        if not [c for c in (CFG.get("notify_channels") or []) if c.get("enabled", True)]:
+            return
+        ev = {"ts": int(time.time()), "type": etype, "note": note,
+              "ups": ((snap or {}).get("device") or {}).get("name") or ""}
+        try:
+            title, body, level = build_message(ev, (snap or {}).get("device"))
+            NOTIFIER.dispatch(title, body, etype, level)
+        except Exception as e:
+            log("关机前同步推送失败：%s" % e, "warn")
+
+    # ---------- 主判定 ----------
+    def evaluate(self, snap):
+        """每个采集周期调一次。返回 True 表示本轮状态有变化。"""
+        if not snap:
+            return False
+        live = snap.get("live") or {}
+        # 切换瞬间的帧（输出电压塌成 0）不参与判断：那时 status 可能刚翻页，
+        # 电量还是上一帧的残值，拿它做关机判据最危险。
+        if not live.get("valid", True):
+            return False
+
+        now = int(time.time())
+        on_batt = bool((live.get("st") or 0) & BIT_OB)
+        chg = live.get("chg")
+
+        with self.lock:
+            if not CFG.get("guard_enabled"):
+                if self.state != "idle":
+                    self._reset("关机保护已关闭")
+                    return True
+                return False
+
+            # 已经动过手就别再来一次（比如 shutdown 被拦下、或进程还没退）
+            if self.state == "fired":
+                return False
+
+            if not on_batt:
+                self.cancel_until = 0
+                self.alert_level = 0
+                self.ob_since = None
+            else:
+                if self.ob_since is None:
+                    self.ob_since = now
+
+            ob_for = (now - self.ob_since) if self.ob_since else 0
+
+            # 启动静默期：防止一开机就断电 → 反复关机 → 反复重启
+            hold = int(CFG.get("guard_boot_hold_s") or 300)
+            if on_batt and now < self.boot_at + hold and self.state in ("idle", "held"):
+                self._set("held", "服务启动 %d 秒内不动作" % hold)
+                return False
+
+            # 手动取消后的静默窗口
+            if on_batt and now < self.cancel_until and self.state == "idle":
+                self._set("idle", "已手动取消，%d 秒内不再触发" % (self.cancel_until - now))
+                return False
+
+            st, act, note = guard_verdict(chg, on_batt, ob_for, self.state, CFG)
+
+            if act == "cancel":
+                self._cancel(note or "市电恢复，自动取消", snap)
+                return True
+            if act == "reset" and self.state != st:
+                self._reset(note)
+                return True
+            if act == "arm":
+                self._arm(chg or 0, ob_for, snap)
+                return True
+            if st != self.state and act is None:
+                self._set(st, note)
+
+            if self.state not in ("armed", "alerted"):
+                return False
+            if self.state == "alerted":
+                # 只告警期间用户把模式改成了关机 → 立刻按关机处理
+                if (CFG.get("guard_mode") or "notify").lower() == "shutdown":
+                    self._fire(snap, force=True)
+                    return True
+                # 电量继续下探到紧急线再补一条
+                lv = self._want_level(chg)
+                if lv > self.alert_level:
+                    self._fire(snap, force=True)
+                return False
+            if not self.deadline:
+                return False
+
+            # 电量掉到紧急线 → 压缩宽限期
+            crit = float(CFG.get("guard_crit_pct") or 10)
+            if chg is not None and chg <= crit:
+                tight = min(self.deadline, now + 30)
+                if tight < self.deadline:
+                    self.deadline = tight
+                    log("电量 %.0f%% 已到紧急线 %.0f%%，宽限期压缩到 30 秒" % (chg, crit))
+
+            if now >= self.deadline:
+                self._fire(snap)
+                return True
+        return False
+
+    def _fire(self, snap, force=False):
+        now = int(time.time())
+        live = snap.get("live") or {}
+        age = now - int(snap.get("ts") or 0)
+
+        # ---- 落地前最后一道复核 ----
+        if not force:
+            if age > 20:
+                log("关机保护：快照已过期 %d 秒，本轮放弃" % age, "warn")
+                return
+            if not (live.get("st") or 0) & BIT_OB:
+                self._cancel("复核时市电已恢复", snap)
+                return
+            chg = live.get("chg")
+            low = float(CFG.get("guard_low_pct") or 25)
+            if chg is None or chg <= 0 or chg > low:
+                log("关机保护：复核电量 %s%%，高于触发线，放弃"
+                    % ("?" if chg is None else "%.0f" % chg), "warn")
+                return
+
+        chg = live.get("chg")
+        level = self._want_level(chg)
+        mode = (CFG.get("guard_mode") or "notify").lower()
+        on_s = now - (self.ob_since or now)
+        desc = "电量 %s%%、电池供电 %d 秒" % (
+            "?" if chg is None else "%.0f" % chg, on_s)
+
+        # 冲突在启用之后才出现（用户又去飞牛里打开了 UPS）→ 运行时也要挡住
+        c = self.conflicts()
+        if mode == "shutdown" and c.get("block_shutdown") and not CFG.get("guard_allow_conflict"):
+            self._set("blocked", "检测到飞牛侧也管着 UPS，已阻止自动关机")
+            self._event("GUARD_CONFLICT", snap,
+                        "%s，但检测到飞牛侧仍在管 UPS，本次未执行关机" % desc)
+            return
+
+        if mode != "shutdown":
+            if not force and level <= self.alert_level:
+                return
+            self.alert_level = level
+            self._set("alerted", "已告警，未关机")
+            self._event("GUARD_ALERT", snap,
+                        "%s；当前是「只告警」模式，没有关机" % desc)
+            return
+
+        cmd = self._resolve_cmd()
+        if not cmd:
+            self._set("blocked", "找不到 shutdown 命令")
+            self._event("GUARD_FAILED", snap,
+                        "%s，但系统里找不到可执行的 shutdown 命令" % desc)
+            return
+
+        note = "%s，执行 %s" % (desc, " ".join(cmd))
+        self.fired_at = now
+        self._set("fired", "已下发关机命令")
+        self._event("GUARD_SHUTDOWN", snap, note, no_push=True)
+        self._notify_sync("GUARD_SHUTDOWN", snap, note)
+        self._save_last_fire({
+            "fired_at": now, "mode": mode, "charge": chg,
+            "on_batt_s": on_s, "cmd": " ".join(cmd),
+            "in_v": live.get("in_v"), "load": live.get("load"),
+        })
+        log("关机保护：%s" % note, "warn")
+        # 留几秒让 HTTP 响应和推送跑完，再真的关
+        time.sleep(2)
+        try:
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, close_fds=True)
+        except Exception as e:
+            self._event("GUARD_FAILED", snap, "关机命令执行失败：%s" % e)
+            log("关机命令执行失败：%s" % e, "error")
+
+    # ---------- 对外动作 ----------
+    def cancel(self, why="用户手动取消"):
+        with self.lock:
+            if self.state not in ("armed", "alerted"):
+                return False, "当前没有待执行的关机"
+            self.cancel_until = int(time.time()) + 600
+            self._cancel(why, COLLECTOR.snap if "COLLECTOR" in globals() else None)
+            self._set("idle", "已取消，10 分钟内不再触发")
+            return True, "已取消"
+
+
+def _risk_cn(r):
+    return {"none": "无", "medium": "中", "high": "高"}.get(r, r or "未知")
+
+
+GUARD = ShutdownGuard(STORE)
 
 
 # ======================================================================
@@ -1641,6 +2295,13 @@ class Collector(object):
 
         # 事件
         self._detect(snap, raw)
+
+        # 关机保护：判定本身很轻（冲突检测有 60 秒缓存）
+        try:
+            if GUARD.evaluate(snap):
+                log("关机保护 → %s（%s）" % (GUARD.state, GUARD.note or ""))
+        except Exception as e:
+            log("关机保护判定异常：%s" % e, "error")
 
     def _build(self, name, raw):
         live = {}
@@ -2346,6 +3007,16 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     limit = 40
                 return self._json({"ok": True, "logs": STORE.notify_logs(limit)})
+            if path == "/api/guard":
+                out = GUARD.status()
+                out["ok"] = True
+                return self._json(out)
+            if path == "/api/guard/check":
+                # 强制重读飞牛的配置文件，不走 60 秒缓存
+                out = GUARD.status()
+                out["conflicts"] = GUARD.conflicts(force=True)
+                out["ok"] = True
+                return self._json(out)
             if path == "/api/update/check":
                 # 用户手动点「检查更新」带 force=1，绕过 90 秒结果缓存
                 f = (qs.get("force") or ["0"])[0] not in ("0", "", "false")
@@ -2376,6 +3047,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._api_notify_save()
             if path == "/api/notify/test":
                 return self._api_notify_test()
+            if path == "/api/guard/save":
+                return self._api_guard_save()
+            if path == "/api/guard/cancel":
+                return self._api_guard_cancel()
+            if path == "/api/guard/sim":
+                return self._api_guard_sim()
             if path == "/api/collect-now":
                 threading.Thread(target=lambda: _safe_tick(), daemon=True).start()
                 return self._json({"ok": True})
@@ -2388,6 +3065,136 @@ class Handler(BaseHTTPRequestHandler):
             return self._err(500, "服务器内部错误：%s" % e)
 
     # ---------- 具体实现 ----------
+    def _api_guard_save(self):
+        body = self._body()
+
+        def num(k, lo, hi):
+            if k not in body:
+                return CFG.get(k)
+            try:
+                v = float(body[k])
+            except Exception:
+                raise ValueError("参数 %s 必须是数字" % k)
+            return max(lo, min(hi, v))
+
+        before = (bool(CFG.get("guard_enabled")), (CFG.get("guard_mode") or "notify"))
+
+        # 先全部算到 new 里，校验通过才落地。
+        # 之前是边算边写 CFG，结果一个被拒绝的请求也能把运行时参数改坏。
+        new = {}
+        try:
+            if "guard_enabled" in body:
+                new["guard_enabled"] = bool(body["guard_enabled"])
+            if "guard_mode" in body:
+                m = str(body["guard_mode"] or "").lower()
+                if m not in ("notify", "shutdown"):
+                    return self._err(400, "guard_mode 只能是 notify 或 shutdown")
+                new["guard_mode"] = m
+            new["guard_low_pct"] = num("guard_low_pct", 5, 90)
+            new["guard_crit_pct"] = num("guard_crit_pct", 1, 89)
+            new["guard_grace_s"] = int(num("guard_grace_s", 10, 3600))
+            new["guard_min_ob_s"] = int(num("guard_min_ob_s", 10, 3600))
+            new["guard_boot_hold_s"] = int(num("guard_boot_hold_s", 0, 3600))
+            if "guard_allow_conflict" in body:
+                new["guard_allow_conflict"] = bool(body["guard_allow_conflict"])
+        except ValueError as e:
+            return self._err(400, str(e))
+
+        if new["guard_crit_pct"] >= new["guard_low_pct"]:
+            return self._err(400, "紧急线必须低于触发线（%s ≥ %s）"
+                             % (new["guard_crit_pct"], new["guard_low_pct"]))
+
+        merged = dict(CFG)
+        merged.update(new)
+
+        # 高危冲突下不允许启用「自动关机」—— 两套逻辑各关一次比不关更糟
+        c = GUARD.conflicts(force=True)
+        if (merged["guard_enabled"] and merged["guard_mode"] == "shutdown"
+                and c.get("block_shutdown") and not merged.get("guard_allow_conflict")):
+            return self._json({
+                "ok": False,
+                "error": "飞牛那边的 UPS 保护还开着，先关掉再启用自动关机",
+                "conflicts": c,
+                "guard": GUARD.status(),
+            }, code=409)
+
+        CFG.update(new)
+        save_cfg(CFG)
+
+        after = (bool(CFG.get("guard_enabled")), (CFG.get("guard_mode") or "notify"))
+        if after != before:
+            # 配置一变就让状态机从零开始，别把旧倒计时带过来
+            GUARD.ob_since = None
+            GUARD.deadline = None
+            GUARD.alert_level = 0
+            GUARD.cancel_until = 0
+            GUARD.boot_at = int(time.time())
+            GUARD._reset("配置已更新")
+            log("关机保护配置：启用=%s 模式=%s 触发=%s%% 宽限=%ss"
+                % (CFG["guard_enabled"], CFG["guard_mode"],
+                   CFG["guard_low_pct"], CFG["guard_grace_s"]))
+
+        out = GUARD.status()
+        out["ok"] = True
+        return self._json(out)
+
+    def _api_guard_cancel(self):
+        ok, msg = GUARD.cancel()
+        out = GUARD.status()
+        out["ok"] = ok
+        out["message"] = msg
+        return self._json(out)
+
+    def _api_guard_sim(self):
+        """演练：把纯决策函数按电量下降曲线跑一遍，不碰真实状态、绝不关机。"""
+        body = self._body()
+        try:
+            start = float(body.get("start_charge") or 40)
+            drop = float(body.get("drop") or 5)
+            steps = int(body.get("steps") or 14)
+            step_s = int(body.get("step_s") or 60)
+        except Exception:
+            return self._err(400, "参数必须是数字")
+        steps = max(2, min(40, steps))
+        step_s = max(10, min(600, step_s))
+        start = max(1.0, min(100.0, start))
+        drop = max(0.5, min(50.0, drop))
+
+        cfg = dict(CFG)
+        cfg["guard_enabled"] = True
+        for k in ("guard_low_pct", "guard_crit_pct", "guard_grace_s", "guard_min_ob_s"):
+            if k in body:
+                try:
+                    cfg[k] = float(body[k])
+                except Exception:
+                    pass
+
+        state, ob_for, deadline = "idle", 0, None
+        chg = start
+        rows = []
+        for _ in range(steps):
+            ob_for += step_s
+            st, act, note = guard_verdict(chg, True, ob_for, state, cfg)
+            if act == "arm":
+                deadline = ob_for + int(cfg.get("guard_grace_s") or 180)
+                rows.append({"t": ob_for, "chg": round(chg, 1), "state": "armed",
+                             "note": "进入 %d 秒宽限期" % int(cfg.get("guard_grace_s") or 180)})
+                state = "armed"
+            elif st != state:
+                state = st
+                rows.append({"t": ob_for, "chg": round(chg, 1), "state": st, "note": note})
+            if state == "armed" and deadline and ob_for >= deadline:
+                rows.append({"t": ob_for, "chg": round(chg, 1), "state": "fire",
+                             "note": "到达截止点，此刻会执行关机"})
+                break
+            chg = max(0.0, chg - drop)
+
+        return self._json({
+            "ok": True, "dry": True, "mode": CFG.get("guard_mode"),
+            "rows": rows,
+            "note": "演练结果只是决策推演，不会真的关机",
+        })
+
     def _static(self, rel):
         safe = os.path.normpath(rel).replace("\\", "/").lstrip("/")
         if safe.startswith("..") or ":" in safe:
@@ -2416,6 +3223,11 @@ class Handler(BaseHTTPRequestHandler):
         out["meta"]["db"] = STORE.db_size()
         out["meta"]["uptime"] = int(time.time()) - COLLECTOR.started
         out["meta"]["counts"] = STORE.counts()
+        try:
+            out["guard"] = GUARD.status()
+        except Exception as e:
+            out["guard"] = {"enabled": False, "state": "idle",
+                            "err": "关机保护状态读取失败：%s" % e}
         return self._json(out)
 
     def _api_vars(self):
