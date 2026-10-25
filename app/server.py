@@ -44,7 +44,7 @@ from html import unescape
 
 APP_NAME = "upshealth"
 APP_CN = "UPS 健康"
-FALLBACK_VERSION = "1.1.0"
+FALLBACK_VERSION = "1.2.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.environ.get("TRIM_APPDEST") or os.path.dirname(HERE)
@@ -259,6 +259,8 @@ DEFAULT_CFG = {
     "update_mirror": "",         # 例如 https://ghfast.top/  加速 GitHub
     "battery_ah": 9.0,           # 电池标称容量 Ah（用于容量测算）
     "battery_dod": 0.85,         # 允许放电深度
+    "battery_eff": 0.85,         # 在线式双变换效率（估电池侧电流用）
+    "peukert_k": 0.0,            # 0 = 用 1.15~1.30 经验区间；>1 = 固定该指数
     "retain_raw_h": 24,
     "retain_1m_d": 30,
     "retain_10m_d": 1095,
@@ -665,6 +667,99 @@ CREATE TABLE IF NOT EXISTS baselines(
             "SELECT id,start_ts,end_ts,start_chg,end_chg,min_rt,avg_power,wh,kind,note "
             "FROM cycles ORDER BY start_ts DESC LIMIT ?", (int(limit),)).fetchall()
 
+    def power_stats(self, days=30):
+        """市电质量与停电统计。
+
+        - 停电次数/时长从 cycles 表汇总，kind 区分真断电（outage）与人为测试（test）
+        - 电压质量只用 1 分钟档，并排除 OB 期间 —— 那时 input.voltage 是 0，
+          那是「没市电」而非「市电电压过低」，混进来会把质量数据彻底带偏
+        - 越界判据按国标 220 V ±10%（198~242 V），频率按 50 Hz ±0.5 Hz
+        """
+        now = int(time.time())
+        since = now - max(1, int(days)) * 86400
+        c = self.conn()
+
+        lt = time.localtime(now)
+        today0 = int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday,
+                                  0, 0, 0, 0, 0, -1)))
+        month0 = int(time.mktime((lt.tm_year, lt.tm_mon, 1,
+                                  0, 0, 0, 0, 0, -1)))
+
+        def _agg(since_ts, kind="outage"):
+            r = c.execute(
+                "SELECT COUNT(*), COALESCE(SUM(end_ts-start_ts),0), "
+                "COALESCE(MAX(end_ts-start_ts),0) FROM cycles "
+                "WHERE kind=? AND end_ts IS NOT NULL AND start_ts>=?",
+                (kind, int(since_ts))).fetchone()
+            return {"count": r[0] or 0, "total_s": int(r[1] or 0),
+                    "longest_s": int(r[2] or 0)}
+
+        outages = {
+            "today": _agg(today0),
+            "month": _agg(month0),
+            "window": _agg(since),
+            "tests": _agg(since, "test"),
+        }
+
+        recent = [
+            {"start_ts": r[0], "end_ts": r[1], "dur_s": int((r[1] or 0) - (r[0] or 0)),
+             "start_chg": r[2], "end_chg": r[3], "avg_power": r[4], "wh": r[5]}
+            for r in c.execute(
+                "SELECT start_ts,end_ts,start_chg,end_chg,avg_power,wh FROM cycles "
+                "WHERE kind='outage' AND end_ts IS NOT NULL ORDER BY start_ts DESC LIMIT 10"
+            ).fetchall()
+        ]
+
+        # 采样档位是按「保留期」分层的：10 秒档只留最近 24 小时，
+        # 1 分钟档只聚合 24 小时以前的数据。所以想覆盖任意窗口，
+        # 必须两块拼起来 —— 只查 res=1 会永远看不到最近一天。
+        raw_cut = now - 24 * 3600
+        base_where = ("FROM samples WHERE ts>=? AND "
+                      "(res=0 OR (res=1 AND ts<?)) AND in_v IS NOT NULL "
+                      "AND in_v>0 AND (st & ?)=0")
+        args = (since, raw_cut, BIT_OB)
+        n, vmin, vmax, vavg, hmin, hmax, havg = c.execute(
+            "SELECT COUNT(*),MIN(in_v),MAX(in_v),AVG(in_v),MIN(in_hz),MAX(in_hz),AVG(in_hz) "
+            + base_where, args).fetchone()
+        n = n or 0
+
+        def _cnt(extra, extra_args):
+            return c.execute("SELECT COUNT(*) " + base_where + " AND " + extra,
+                             tuple(args) + tuple(extra_args)).fetchone()[0]
+
+        under = _cnt("in_v < 198", ()) if n else 0
+        over = _cnt("in_v > 242", ()) if n else 0
+        hz_bad = _cnt("in_hz IS NOT NULL AND abs(in_hz-50) > 0.5", ()) if n else 0
+        hz_n = _cnt("in_hz IS NOT NULL", ()) if n else 0
+
+        hist = []
+        if n:
+            for lo, cnt in c.execute(
+                    "SELECT CAST(in_v/5 AS INTEGER)*5 AS b, COUNT(*) " + base_where +
+                    " GROUP BY b ORDER BY b", args).fetchall():
+                hist.append([int(lo), int(cnt)])
+
+        pct = lambda a, b: round(a * 100.0 / b, 2) if b else 0.0
+        return {
+            "days": int(days),
+            "outages": outages,
+            "recent_outages": recent,
+            "quality": {
+                "samples": n,
+                "v_min": round(vmin, 1) if vmin is not None else None,
+                "v_max": round(vmax, 1) if vmax is not None else None,
+                "v_avg": round(vavg, 1) if vavg is not None else None,
+                "under_pct": pct(under, n),
+                "over_pct": pct(over, n),
+                "hz_min": round(hmin, 1) if hmin is not None else None,
+                "hz_max": round(hmax, 1) if hmax is not None else None,
+                "hz_avg": round(havg, 2) if havg is not None else None,
+                "hz_bad_pct": pct(hz_bad, hz_n),
+                "hist": hist,
+                "limits": {"v_low": 198, "v_high": 242, "hz_dev": 0.5},
+            },
+        }
+
     def event_counts(self):
         c = self.conn()
         return dict(c.execute("SELECT type,COUNT(*) FROM events GROUP BY type").fetchall())
@@ -789,6 +884,8 @@ EVENT_META = {
     "OVERLOAD":        ("输出过载", "crit"),
     "FORCED_SHUTDOWN": ("UPS 强制关机", "crit"),
     "CHARGE_JUMP":     ("电量计异常跳变", "warn"),
+    "DEVICE_LOST":     ("UPS 失联", "crit"),
+    "DEVICE_BACK":     ("UPS 恢复通信", "ok"),
     "DEVICE_CHANGED":  ("UPS 设备变化", "info"),
     "VARS_CHANGED":    ("变量集变化", "info"),
     "BLIND_SPOT":      ("观测盲区", "warn"),
@@ -802,7 +899,7 @@ EVENT_META = {
 NOTIFY_EVENT_CHOICES = [
     "POWER_LOSS", "POWER_RESTORE", "LOW_BATTERY", "REPLACE_BATTERY",
     "ALARM", "OVERLOAD", "FORCED_SHUTDOWN", "CHARGE_JUMP",
-    "BLIND_SPOT", "DEVICE_CHANGED", "UPDATE",
+    "BLIND_SPOT", "DEVICE_LOST", "DEVICE_BACK", "DEVICE_CHANGED", "UPDATE",
 ]
 
 LEVEL_TAG = {"crit": "【严重】", "warn": "【警告】", "ok": "【恢复】", "info": "【提示】"}
@@ -1158,19 +1255,69 @@ NOTIFIER = Notifier()
 # ======================================================================
 # 健康评估
 # ======================================================================
+# Peukert 指数经验区间。12V 通用型 AGM/铅钙电池多在 1.15~1.30，
+# HR（高倍率）系列更低、深循环系列更高。用户装的是哪一种我们并不知道，
+# 所以给出的是「期望续航区间」而不是一个单点，结论只判实测是否落在区间内。
+PEUKERT_RANGE = (1.15, 1.30)
+
+_CAL_CACHE = {"ts": 0.0, "depth": None}
+
+
+def _deepest_discharge(days=90):
+    """最近 N 天内最深的一次放电深度（百分点）。
+
+    用来判断 UPS 到底有没有「学过」这组电池：只要没经历过一次像样的深放，
+    battery.capacity 就会一直挂在 100，battery.runtime 也只是按设计表查出来的
+    估算值 —— 那时它报告的任何「容量」都不是实测，不能当证据用。
+    """
+    now = time.time()
+    if now - _CAL_CACHE["ts"] < 60:
+        return _CAL_CACHE["depth"]
+    depth = None
+    try:
+        with STORE.lock:
+            row = STORE.conn().execute(
+                "SELECT MAX(start_chg - end_chg) FROM cycles "
+                "WHERE start_chg IS NOT NULL AND end_chg IS NOT NULL "
+                "AND end_ts > ?", (int(now) - days * 86400,)).fetchone()
+        if row and row[0] is not None:
+            depth = round(float(row[0]), 1)
+    except Exception:
+        depth = None
+    _CAL_CACHE["ts"] = now
+    _CAL_CACHE["depth"] = depth
+    return depth
+
+
 def assess(live, raw):
-    """电池健康：能量守恒反推容量。返回 dict。"""
+    """电池健康：倍率（Peukert）修正后的区间判定。
+
+    旧算法拿「当前负载 × 满电续航」当可放能量，再除以铭牌能量，对这套配置是错的：
+    12V 9Ah 通用铅酸在 1.3C（约 11 A）下只能放出铭牌 35~40% 的能量，那是倍率损耗，
+    不是老化。换一组全新电池同样只得三四十个百分点，于是永远判「建议更换」——
+    这正是本函数被重写的原因。
+
+    Peukert 关系：C_eff = C_rated × (I_ref / I)^(k-1)，I_ref 取 20 小时率 Ah/20。
+    k 取经验区间得到期望续航区间，实测落在区间内即「无容量衰减证据」。
+    """
     chg = live.get("chg")
     rt = live.get("rt")
     rp = live.get("rp")
     vn = fnum(raw.get("battery.voltage.nominal"))
     ah = float(CFG.get("battery_ah") or 9.0)
     dod = float(CFG.get("battery_dod") or 0.85)
+    eff = float(CFG.get("battery_eff") or 0.85)
+    k_fix = float(CFG.get("peukert_k") or 0)
 
     out = {
         "score": None, "grade": "unknown", "grade_cn": "数据不足",
+        "verdict": "unknown", "verdict_cn": "数据不足",
         "capacity_pct": None, "nominal_wh": None, "usable_wh": None,
         "full_runtime_s": None, "basis": None, "notes": [],
+        # 新增：把「期望值」摆到台面上，让判断可解释
+        "c_rate": None, "bat_amps": None, "ratio": None,
+        "expect_runtime_s": None, "expect_wh_range": None,
+        "peukert_k": None, "calibrated": None, "calib_depth": None,
     }
     if not vn or vn <= 0 or ah <= 0:
         out["notes"].append("缺少标称电压或电池容量配置，无法测算")
@@ -1182,37 +1329,121 @@ def assess(live, raw):
         out["notes"].append("需电量 >5% 且有负载时才能测算")
         return out
 
+    if eff <= 0 or eff > 1:
+        eff = 0.85
+
+    # ---- 实测：按当前电量折算到满电，得到「满电可撑多久」 ----
     full_rt = rt / (chg / 100.0)
-    usable = rp * full_rt / 3600.0
-    cap = usable / (nominal_wh * dod) * 100.0
-
     out["full_runtime_s"] = int(full_rt)
-    out["usable_wh"] = round(usable, 1)
-    out["capacity_pct"] = round(cap, 1)
-    out["basis"] = ("按当前 %0.0f%% 电量下续航 %d 秒、负载 %0.0f W 反推满电可放出 %0.1f Wh，"
-                    "对比标称 %0.1f Wh × 放电深度 %0.0f%%"
-                    % (chg, rt, rp, usable, nominal_wh, dod * 100))
+    out["usable_wh"] = round(rp * full_rt / 3600.0, 1)
 
-    # 健康分：容量为主，辅以 RB 告警与温度
-    score = max(0.0, min(100.0, cap))
+    # ---- 电池侧电流与倍率 ----
+    i_bat = rp / (vn * eff)
+    c_rate = i_bat / ah
+    out["bat_amps"] = round(i_bat, 2)
+    out["c_rate"] = round(c_rate, 2)
+    i_ref = ah / 20.0
+
+    def expect_at(k):
+        c_eff = ah * (i_ref / i_bat) ** (k - 1.0)
+        return c_eff * vn * dod / rp * 3600.0
+
+    ks = (k_fix,) if k_fix > 1.0 else PEUKERT_RANGE
+    # 注意方向：k 越小，倍率惩罚越轻，修正后的可用容量越大 → 期望续航越长。
+    # 所以区间下限对应 k 的上界。
+    exp_lo = expect_at(max(ks))
+    exp_hi = expect_at(min(ks))
+    exp_mid = (exp_lo + exp_hi) / 2.0
+    out["peukert_k"] = round(k_fix, 2) if k_fix > 1.0 else list(PEUKERT_RANGE)
+    out["expect_runtime_s"] = [int(exp_lo), int(exp_hi)]
+    out["expect_wh_range"] = [round(rp * exp_lo / 3600.0, 1),
+                              round(rp * exp_hi / 3600.0, 1)]
+
+    ratio = full_rt / exp_mid if exp_mid > 0 else None
+    out["ratio"] = round(ratio, 3) if ratio else None
+    # 兼容旧字段：含义改为「实测相对期望中位」，不再是「占铭牌的百分比」
+    out["capacity_pct"] = round(min(150.0, ratio * 100.0), 1) if ratio else None
+
+    # ---- 工况体检：极端倍率下任何测算都不可靠 ----
+    sane = True
+    if c_rate < 0.05:
+        sane = False
+        out["notes"].append("负载过轻（%.2fC），UPS 续航估算本身误差很大" % c_rate)
+    elif c_rate > 3.0:
+        sane = False
+        out["notes"].append("放电倍率过高（%.2fC），超出这组电池的设计工况" % c_rate)
+    if rp < 50:
+        sane = False
+        out["notes"].append("实际功率仅 %.0f W，低于可靠测算区间" % rp)
+
+    # ---- 标定状态：UPS 说自己容量 100 不代表电池新，只代表它没学过 ----
+    depth = _deepest_discharge()
+    out["calib_depth"] = depth
+    out["calibrated"] = bool(depth is not None and depth >= 40)
+    if not out["calibrated"]:
+        out["notes"].append(
+            "尚未做过深度放电：UPS 报的续航是按设计表估算的，不是实测值"
+            + ("（最深受电记录仅 %0.0f%%）" % depth if depth else "（无放电记录）"))
+
+    if ratio is None or not sane:
+        out["verdict"], out["verdict_cn"] = "unknown", "数据不足"
+        out["basis"] = ("当前 %.0f%% 电量、%.0f W 负载、电池侧约 %.1f A（%.2fC），"
+                        "该工况下无法给出可靠容量结论" % (chg, rp, i_bat, c_rate))
+        return out
+
+    # ---- 判定：只看实测有没有掉出期望区间 ----
+    if full_rt >= exp_lo:
+        verdict, verdict_cn = "ok", "表现正常"
+    elif full_rt >= exp_lo * 0.85:
+        verdict, verdict_cn = "watch", "略有衰减"
+    else:
+        verdict, verdict_cn = "suspect", "疑似衰减"
+    out["verdict"], out["verdict_cn"] = verdict, verdict_cn
+
+    # ---- 评分：以 ratio 为主线，1.0 附近封顶 ----
+    if ratio >= 1.0:
+        score = 95.0
+    elif ratio >= 0.90:
+        score = 88.0 + (ratio - 0.90) * 70.0
+    elif ratio >= 0.80:
+        score = 76.0 + (ratio - 0.80) * 120.0
+    elif ratio >= 0.70:
+        score = 62.0 + (ratio - 0.70) * 140.0
+    elif ratio >= 0.55:
+        score = 45.0 + (ratio - 0.55) * 113.0
+    else:
+        score = max(0.0, ratio / 0.55 * 45.0)
+
+    # UPS 自己报 RB 才是有分量的证据，其余都只是提示
     if live.get("st", 0) & BIT_RB:
         score -= 15
-        out["notes"].append("UPS 当前报告需更换电池（RB）")
+        out["notes"].append("UPS 主动报告需更换电池（RB），这是固件给出的明确信号")
     temp = live.get("temp")
     if temp is not None and temp > 30:
         score -= min(10.0, (temp - 30) * 2)
         out["notes"].append("电池温度 %.1f℃ 偏高，每高 10℃ 寿命约减半" % temp)
-    out["score"] = int(round(max(0.0, min(100.0, score))))
+    if chg < 90:
+        out["notes"].append("当前电量 %0.0f%%，已按比例折算到满电" % chg)
 
+    out["score"] = int(round(max(0.0, min(100.0, score))))
     s = out["score"]
-    if s >= 80:
-        out["grade"], out["grade_cn"] = "good", "良好"
-    elif s >= 60:
-        out["grade"], out["grade_cn"] = "fair", "关注"
-    elif s >= 40:
-        out["grade"], out["grade_cn"] = "poor", "建议更换"
+    if s >= 85:
+        out["grade"], out["grade_cn"] = "good", "表现正常"
+    elif s >= 70:
+        out["grade"], out["grade_cn"] = "fair", "略有衰减"
+    elif s >= 55:
+        out["grade"], out["grade_cn"] = "poor", "建议关注"
     else:
-        out["grade"], out["grade_cn"] = "critical", "尽快更换"
+        out["grade"], out["grade_cn"] = "critical", "疑似严重衰减"
+
+    out["basis"] = (
+        "当前 %.0f%% 电量下续航 %d 秒、负载 %.0f W；电池侧约 %.1f A（%.2fC）。"
+        "按 Peukert 指数 %s 推算，这组 %.0f Ah／%.0f V 电池在该倍率下应能撑 %d~%d 秒，"
+        "实测折算满电 %d 秒，为中位期望的 %0.0f%%。倍率损耗已计入，未计为老化。"
+        % (chg, rt, rp, i_bat, c_rate,
+           ("%.2f" % k_fix) if k_fix > 1.0 else "%.2f~%.2f" % PEUKERT_RANGE,
+           ah, vn, int(exp_lo), int(exp_hi), int(full_rt),
+           ratio * 100.0))
     return out
 
 
@@ -1240,6 +1471,15 @@ class Collector(object):
         self.downsample_due = time.time() + 600
         self.boot_marked = False
         self.first_ever = False
+        # 设备失联跟踪：None = 通信正常；有值 = 失联起始时间戳
+        self.dev_down_since = None
+        self.dev_down_code = None
+        self.dev_down_msg = ""
+        self.dev_down_ticks = 0
+        self.dev_down_at = ""       # 失联瞬间的 UPS 状态码，用于恢复事件对照
+        # 最近一次「有效帧」的实功率。市电切换那几帧的 ups.realpower 是 0，
+        # 被过滤后放电周期会一个功率样本都没有，用这个值兜底算能耗。
+        self.last_good_rp = None
         self.tick_lock = threading.Lock()
 
     # ---------- 主循环 ----------
@@ -1270,13 +1510,52 @@ class Collector(object):
             time.sleep(max(0.5, interval - (time.time() - t0)))
 
     def _set_error(self, code, msg, hint=""):
-        self.err = {"code": code, "message": msg, "hint": hint,
-                    "ts": int(time.time())}
+        now = int(time.time())
+        self.err = {"code": code, "message": msg, "hint": hint, "ts": now}
         # 保持旧快照的元信息，但标记过期 —— 前端必须能看出「这不是当前值」
         if self.snap:
             self.snap["stale"] = True
             self.snap["err"] = self.err
+        # 设备失联是「过程」不是「瞬时」：只在正常→故障跳变时落一条事件，
+        # 之后每 tick 只累加失败次数，避免 5 秒一条把事件表刷爆。
+        if self.dev_down_since is None:
+            self.dev_down_since = now
+            self.dev_down_code = code
+            self.dev_down_msg = msg
+            self.dev_down_ticks = 0
+            self.dev_down_at = ((self.snap or {}).get("live") or {}).get("status", "")
+            self.store.add_event({
+                "ts": now, "ups": self.ups_name or "",
+                "type": "DEVICE_LOST",
+                "from_st": self.dev_down_at, "to_st": "",
+                "note": "与 UPS 通信中断（%s）：%s" % (code, msg),
+            })
+        else:
+            self.dev_down_ticks += 1
         log("[%s] %s" % (code, msg), "warn")
+
+    def _mark_device_back(self, snap):
+        """通信恢复：补一条 DEVICE_BACK，带失联时长与期间丢失的采样数。"""
+        if self.dev_down_since is None:
+            return
+        now = int(time.time())
+        dur = max(0, now - self.dev_down_since)
+        live = snap["live"]
+        self.store.add_event({
+            "ts": snap["ts"], "ups": snap["device"]["name"],
+            "type": "DEVICE_BACK",
+            "from_st": self.dev_down_at, "to_st": live["status"],
+            "chg": live["chg"], "rt": live["rt"], "in_v": live["in_v"],
+            "out_v": live["out_v"], "load": live["load"], "temp": live["temp"],
+            "note": "与 UPS 恢复通信，失联 %d 分 %d 秒（期间丢失约 %d 次采样）"
+                    % (dur // 60, dur % 60, self.dev_down_ticks + 1),
+        })
+        log("UPS 恢复通信，失联 %d 秒" % dur)
+        self.dev_down_since = None
+        self.dev_down_code = None
+        self.dev_down_msg = ""
+        self.dev_down_ticks = 0
+        self.dev_down_at = ""
 
     def _mark_boot(self):
         last_ts, _st = self.store.last_sample()
@@ -1340,6 +1619,9 @@ class Collector(object):
 
         snap = self._build(name, raw)
         self.snap = snap
+        if snap["live"].get("valid") and snap["live"].get("rp"):
+            self.last_good_rp = snap["live"]["rp"]
+        self._mark_device_back(snap)
         self.err = None
 
         # 时间戳单调修正
@@ -1351,10 +1633,11 @@ class Collector(object):
         self.mono_ts = ts
         self.last_ts = ts
 
-        # 入库
-        row = {c: snap["live"].get(c) for c in SERIES_COLS}
-        self.store.write_sample(ts, 0, row, snap["live"]["st"], 1,
-                                snap["live"].get("in_v"), snap["live"].get("in_v"))
+        # 入库（切换瞬间的无效帧不入库，宁可留缺口也不留假值）
+        if snap["live"].get("valid", True):
+            row = {c: snap["live"].get(c) for c in SERIES_COLS}
+            self.store.write_sample(ts, 0, row, snap["live"]["st"], 1,
+                                    snap["live"].get("in_v"), snap["live"].get("in_v"))
 
         # 事件
         self._detect(snap, raw)
@@ -1378,6 +1661,20 @@ class Collector(object):
         live["temp"] = fnum(raw.get("battery.temperature"))
         live["nominal_va"] = fnum(raw.get("ups.power.nominal"))
         live["source"] = raw.get("input.source") or ""
+
+        # ---- 读数有效性 ----
+        # 市电切换的瞬间（OL→OB / OB→OL），UPS 会在一个 poll 周期里把
+        # output.voltage、ups.load、ups.realpower 一起吐成 0。那是「还没读到」
+        # 而不是「真的是 0」—— 在线式 UPS 只要在供电，输出电压就不可能接近 0，
+        # 拿它做判据最可靠。这些帧必须剔除，否则会把曲线砸出深坑、
+        # 还会让放电周期的平均功率被 0 拉低一半。
+        _ov = live.get("out_v")
+        live["valid"] = not (_ov is not None and _ov < 50)
+        live["volatile"] = not live["valid"]
+        if not live["valid"]:
+            for _k in ("in_v", "in_hz", "out_v", "out_a", "out_hz",
+                       "load", "rp", "nominal_va"):
+                live[_k] = None
 
         device = {
             "name": name,
@@ -1473,7 +1770,7 @@ class Collector(object):
                 self.ob_powers = []
             if live["rt"] is not None:
                 self.ob_min_rt = live["rt"] if self.ob_min_rt is None else min(self.ob_min_rt, live["rt"])
-            if live["rp"]:
+            if live["rp"] and live["rp"] > 20:
                 self.ob_powers.append(live["rp"])
 
         # 电量异常跳变
@@ -1497,6 +1794,11 @@ class Collector(object):
             return
         live = snap["live"]
         avg_p = (sum(self.ob_powers) / len(self.ob_powers)) if self.ob_powers else None
+        if avg_p is None and self.last_good_rp:
+            # 切换瞬间的读数被当成无效帧剔掉了，放电期间可能一条功率样本都没有；
+            # 用断电前最后一个有效值兜底，至少能给出量级正确的能耗。
+            avg_p = self.last_good_rp
+            log("放电周期无有效功率样本，用断电前 %0.0f W 兜底" % avg_p)
         dur = snap["ts"] - self.ob_start
         wh = (avg_p * dur / 3600.0) if avg_p else None
         # 判定类型：时间短且未出现 LB → 人为测试；否则记断电
@@ -2024,6 +2326,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._api_history(qs)
             if path == "/api/cycles":
                 return self._api_cycles(qs)
+            if path == "/api/power":
+                try:
+                    days = min(365, max(1, int((qs.get("days") or ["30"])[0])))
+                except Exception:
+                    days = 30
+                return self._json(dict(STORE.power_stats(days), ok=True))
             if path == "/api/meta":
                 return self._api_meta()
             if path == "/api/settings":
@@ -2167,6 +2475,7 @@ class Handler(BaseHTTPRequestHandler):
             "ALARM": "告警", "FORCED_SHUTDOWN": "强制关机", "OVERLOAD": "超载",
             "INIT": "开始观测", "SESSION_START": "服务启动",
             "BLIND_SPOT": "观测盲区", "DEVICE_CHANGED": "设备变化",
+            "DEVICE_LOST": "UPS 失联", "DEVICE_BACK": "UPS 恢复通信",
             "VARS_CHANGED": "变量集变化", "CHARGE_JUMP": "电量跳变",
             "UPDATE": "软件更新",
         }

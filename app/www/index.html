@@ -213,8 +213,31 @@ a{color:inherit;text-decoration:none}
 .vnote{font-size:11.5px;line-height:1.55;color:var(--ink-3);margin-top:4px;max-width:64ch}
 .stat-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin-bottom:13px}
 .stat-cell{background:var(--card);border-radius:var(--r-lg);padding:16px 18px}
+/* .kicker 用的是 line-height:1，中文在这种行高下会被裁掉下半截，卡片内单独放宽 */
+.stat-cell .kicker{line-height:1.55;letter-spacing:.06em}
 .stat-cell .sv{font:650 26px/1.1 var(--font-display);letter-spacing:-.02em;margin-top:7px;font-variant-numeric:tabular-nums}
+/* 「10 分 5 秒」这类长值在 4 列布局里会换行把卡片撑高，降一号字即可单行容纳 */
+.stat-cell .sv.sm{font-size:21px;letter-spacing:-.01em}
 @media(max-width:760px){.stat-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* 电压分布条：左标签 / 中间轨道 / 右占比 */
+.hist-row{display:grid;grid-template-columns:62px minmax(0,1fr) 50px;gap:10px;align-items:center;padding:6px 0}
+.hist-row .hk{font:500 11.5px/1 var(--font-mono);color:var(--ink-2);text-align:right;font-variant-numeric:tabular-nums}
+.hist-track{height:22px;border-radius:6px;background:var(--fill-1);overflow:hidden}
+.hist-track>i{display:block;height:100%;border-radius:6px;background:var(--ink-1);width:0;
+  transition:width var(--dur-2) var(--ease)}
+.hist-track>i.w{background:var(--warn-fill)}
+.hist-track>i.c{background:var(--crit)}
+.hist-row .hp{font:500 11px/1 var(--font-mono);color:var(--ink-3);text-align:right;font-variant-numeric:tabular-nums}
+/* 电压很稳时只有两三个桶，内容会缩在卡片顶部，居中更平衡 */
+#pwHist{display:flex;flex-direction:column;justify-content:center;min-height:132px}
+
+/* 健康判定依据：分数必须能解释，否则用户只能盲信 */
+.hnote{margin-top:13px;padding-top:12px;border-top:.5px solid var(--line);
+  font:12px/1.7 var(--font-sans);color:var(--ink-2)}
+.hnote ul{margin:8px 0 0;padding-left:17px;color:var(--ink-3)}
+.hnote li{margin:3px 0}
+.hnote li.w{color:var(--warn)}
 .vv{font:600 13.5px/1.3 var(--font-mono);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .vv .u{font-size:11px;color:var(--ink-3);font-weight:500;margin-left:3px}
 .vv.miss{color:var(--ink-3);font-weight:500}
@@ -387,6 +410,7 @@ a{color:inherit;text-decoration:none}
     </div>
     <nav class="nav" id="nav">
       <button class="nav-item on" data-page="overview"><svg class="ic"><use href="#i-home"/></svg>总览</button>
+      <button class="nav-item" data-page="power"><svg class="ic"><use href="#i-plug"/></svg>市电</button>
       <button class="nav-item" data-page="events"><svg class="ic"><use href="#i-clock"/></svg>事件</button>
       <button class="nav-item" data-page="vars"><svg class="ic"><use href="#i-list"/></svg>变量</button>
     </nav>
@@ -486,6 +510,7 @@ a{color:inherit;text-decoration:none}
             <div class="kicker" id="batKick">—</div>
           </div>
           <div id="batRows"></div>
+          <div id="batNote"></div>
         </div>
         <div class="card">
           <div class="chart-head" style="margin-bottom:10px">
@@ -494,6 +519,48 @@ a{color:inherit;text-decoration:none}
           </div>
           <div class="ev-list" id="recentEvents"><div class="empty" style="padding:24px 0"><div class="ed">暂无事件</div></div></div>
         </div>
+      </div>
+    </section>
+
+    <!-- ================= 市电 ================= -->
+    <section class="page" id="page-power">
+      <div class="chart-head" style="margin-bottom:13px">
+        <div>
+          <div class="chart-title" style="font-size:19px">市电与供电</div>
+          <div class="kicker" style="margin-top:4px">越界判据按国标 220 V ±10%（198–242 V），频率 50 Hz ±0.5 Hz</div>
+        </div>
+        <div class="seg" id="pwSeg">
+          <button data-d="7">7 天</button>
+          <button data-d="30" class="on">30 天</button>
+          <button data-d="90">90 天</button>
+        </div>
+      </div>
+
+      <div class="stat-row" id="pwOutageRow"></div>
+
+      <div class="grid g2" style="margin-top:13px">
+        <div class="card">
+          <div class="chart-head" style="margin-bottom:14px">
+            <div class="chart-title">输入电压分布</div>
+            <div class="kicker" id="pwVKick">—</div>
+          </div>
+          <div id="pwHist"><div class="empty" style="padding:24px 0"><div class="ed">暂无数据</div></div></div>
+        </div>
+        <div class="card">
+          <div class="chart-head" style="margin-bottom:14px">
+            <div class="chart-title">电能质量</div>
+            <div class="kicker">仅统计市电在位时段</div>
+          </div>
+          <div id="pwQuality"></div>
+        </div>
+      </div>
+
+      <div class="vgroup" style="margin-top:13px">
+        <div class="vgroup-h">
+          <span class="nm">最近停电</span>
+          <span class="kicker">人为测试放电不计入</span>
+        </div>
+        <div id="pwRecent"></div>
       </div>
     </section>
 
@@ -510,6 +577,7 @@ a{color:inherit;text-decoration:none}
             <button data-f="POWER_LOSS">断电</button>
             <button data-f="POWER_RESTORE">恢复</button>
             <button data-f="REPLACE_BATTERY">电池告警</button>
+            <button data-f="DEVICE_LOST">失联</button>
           </div>
           <button class="btn sm" id="btnCsv"><svg style="width:13px;height:13px"><use href="#i-down"/></svg>CSV</button>
         </div>
@@ -539,6 +607,7 @@ a{color:inherit;text-decoration:none}
 
 <nav class="bottom-nav" id="bottomNav">
   <button data-page="overview" class="on"><svg><use href="#i-home"/></svg>总览</button>
+  <button data-page="power"><svg><use href="#i-plug"/></svg>市电</button>
   <button data-page="events"><svg><use href="#i-clock"/></svg>事件</button>
   <button data-page="vars"><svg><use href="#i-list"/></svg>变量</button>
 </nav>
@@ -679,6 +748,8 @@ const EV_STYLE = {
   INIT:            { cls: "mute", icon: "i-home" },
   SESSION_START:   { cls: "mute", icon: "i-refresh" },
   BLIND_SPOT:      { cls: "warn", icon: "i-clock" },
+  DEVICE_LOST:     { cls: "crit", icon: "i-plug" },
+  DEVICE_BACK:     { cls: "ok",   icon: "i-plug" },
   DEVICE_CHANGED:  { cls: "warn", icon: "i-plug" },
   VARS_CHANGED:    { cls: "warn", icon: "i-list" },
   CHARGE_JUMP:     { cls: "warn", icon: "i-batt" },
@@ -786,7 +857,7 @@ $("#btnTheme").onclick = () => {
 };
 
 /* ---------------- 页面切换 ---------------- */
-const PAGES = ["overview", "events", "vars"];
+const PAGES = ["overview", "power", "events", "vars"];
 function go(page, fromHash) {
   if (!PAGES.includes(page)) page = "overview";
   S.page = page;
@@ -795,6 +866,7 @@ function go(page, fromHash) {
   if (!fromHash) { try { history.replaceState(null, "", "#" + page); } catch (e) {} }
   if (page === "events") loadEvents();
   if (page === "vars") loadVars();
+  if (page === "power") loadPower();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 $$("#nav .nav-item, #bottomNav button").forEach(b => {
@@ -875,7 +947,7 @@ function renderStatus(j) {
   if (codes.includes("OVER")) tags.push({ t: "超载", c: "crit" });
   if (!tags.length) tags.push({ t: live.status || "状态未知", c: "" });
   if (h.grade_cn && h.score !== null && h.score !== undefined) {
-    const gc = h.score >= 80 ? "ok" : h.score >= 60 ? "" : h.score >= 40 ? "warn" : "crit";
+    const gc = h.score >= 85 ? "ok" : h.score >= 70 ? "" : h.score >= 55 ? "warn" : "crit";
     tags.push({ t: "电池 " + h.grade_cn, c: gc });
   }
   $("#heroTags").innerHTML = tags.map(x => '<span class="tag ' + x.c + '">' + esc(x.t) + "</span>").join("");
@@ -912,7 +984,7 @@ function renderStatus(j) {
   hi.style.width = (hs || 0) + "%";
   hi.className = hcls === "ok" ? "ok" : hcls === "crit" ? "c" : hcls === "warn" ? "w" : "";
   mh.querySelector(".sub").textContent = h.capacity_pct !== null && h.capacity_pct !== undefined
-    ? "实测容量 " + fmt(h.capacity_pct, 0) + "%" + (h.grade_cn ? " · " + h.grade_cn : "")
+    ? "较预期 " + fmt(h.capacity_pct, 0) + "%" + (h.grade_cn ? " · " + h.grade_cn : "")
     : (h.grade_cn || "数据不足");
 
   // 电池组
@@ -941,14 +1013,16 @@ function setMetric(sel, label, mainVal, mainUnit, subVal, subUnit, barPct, barPc
 
 function renderBatRows(j) {
   const live = j.live || {}, dev = j.device || {}, h = j.health || {};
-  // [标签, 值, 单位, 小数位]；unit 为空则不渲染单位（续航用 mm:ss 自带格式）
+  // [标签, 值, 单位, 小数位, 特殊渲染]；unit 为空则不渲染单位
   const rows = [
     ["电量", live.chg, "%", 0],
     ["续航", live.rt, "", 0, "rt"],
     ["电压", live.bat_v, "V", 1],
     ["温度", live.temp, "℃", 1],
-    ["实测容量", h.capacity_pct, "%", 0],
-    ["可放出能量", h.usable_wh, "Wh", 1],
+    ["放电倍率", h.c_rate, "C", 2],
+    ["电池电流", h.bat_amps, "A", 1],
+    ["较预期续航", h.capacity_pct, "%", 0],
+    ["理论续航区间", h.expect_runtime_s, "", 0, "range"],
     ["低电量阈值", dev.lowbatt_nut, "%", 0],
     ["固件保护点", dev.lowbatt_fw, "%", 0],
   ];
@@ -957,11 +1031,15 @@ function renderBatRows(j) {
     if (mode === "rt" && !miss) {
       const n = Math.round(num(v));
       val = Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0");
+    } else if (mode === "range") {
+      miss = !(Array.isArray(v) && v.length === 2);
+      val = miss ? NA : Math.round(v[0] / 60) + "–" + Math.round(v[1] / 60);
     } else {
       val = miss ? NA : fmt(v, d);
     }
     return '<div class="vrow"><div class="vk"><div class="cn">' + esc(k) +
       (mode === "rt" ? '<span class="key" style="display:inline;margin-left:6px">分:秒</span>' : "") +
+      (mode === "range" ? '<span class="key" style="display:inline;margin-left:6px">分</span>' : "") +
       '</div></div><div class="vv' + (miss ? " miss" : "") + '">' + esc(val) +
       (!miss && u ? '<span class="u">' + esc(u) + "</span>" : "") + "</div></div>";
   }).join("");
@@ -970,6 +1048,17 @@ function renderBatRows(j) {
     ? (dev.lowbatt_nut - dev.lowbatt_fw) : null;
   $("#batKick").textContent = gap !== null && gap > 0
     ? "阈值余量 " + fmt(gap, 0) + "%" : "";
+
+  // 判定依据必须露出来：一个孤零零的分数没法让人相信，也没法让人质疑
+  const nb = [];
+  if (h.basis) nb.push('<div>' + esc(h.basis) + "</div>");
+  const notes = h.notes || [];
+  if (notes.length) {
+    nb.push("<ul>" + notes.map(n =>
+      "<li" + (/未做|尚未|估算/.test(n) ? ' class="w"' : "") + ">" + esc(n) + "</li>"
+    ).join("") + "</ul>");
+  }
+  $("#batNote").innerHTML = nb.length ? '<div class="hnote">' + nb.join("") + "</div>" : "";
 }
 
 function renderBanner(b) {
@@ -1208,6 +1297,112 @@ $("#evFilter").onclick = e => {
   loadEvents();
 };
 $("#btnCsv").onclick = () => { location.href = "/api/export.csv?range=24h"; };
+
+/* ---------------- 市电 ---------------- */
+function durText(s) {
+  s = Math.round(s || 0);
+  if (s <= 0) return "—";
+  if (s < 60) return s + " 秒";
+  if (s < 3600) return Math.floor(s / 60) + " 分" + (s % 60 ? " " + (s % 60) + " 秒" : "");
+  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+  return h + " 时" + (m ? " " + m + " 分" : "");
+}
+
+async function loadPower() {
+  const days = S.pwDays || 30;
+  const j = await api("/api/power?days=" + days);
+  if (!j || !j.ok) return;
+  renderPower(j);
+}
+
+function renderPower(j) {
+  const o = j.outages || {}, q = j.quality || {};
+  const td = o.today || {}, mo = o.month || {}, wn = o.window || {};
+  const lim = q.limits || { v_low: 198, v_high: 242, hz_dev: 0.5 };
+
+  /* 停电统计：今日 / 本月 / 窗口 / 最长一次 */
+  const longest = (j.recent_outages || []).slice()
+    .sort((a, b) => (b.dur_s || 0) - (a.dur_s || 0))[0];
+  const cells = [
+    ["今日停电", (td.count || 0) + " 次", td.total_s ? "累计 " + durText(td.total_s) : "无"],
+    ["本月停电", (mo.count || 0) + " 次", mo.total_s ? "累计 " + durText(mo.total_s) : "无"],
+    [j.days + " 天停电", (wn.count || 0) + " 次", "共 " + durText(wn.total_s)],
+    ["最长一次", wn.longest_s ? durText(wn.longest_s) : "无",
+     longest ? ymd(longest.start_ts) : "窗口内无记录"],
+  ];
+  $("#pwOutageRow").innerHTML = cells.map(([k, v, s]) =>
+    '<div class="stat-cell"><div class="kicker">' + esc(k) + "</div>" +
+    '<div class="sv' + (String(v).length > 5 ? " sm" : "") + '">' + esc(v) + "</div>" +
+    '<div class="kicker" style="margin-top:7px">' + esc(s) + "</div></div>").join("");
+
+  /* 输入电压分布 */
+  const hist = q.hist || [];
+  const total = hist.reduce((a, h) => a + h[1], 0);
+  if (!hist.length) {
+    $("#pwVKick").textContent = "—";
+    $("#pwHist").innerHTML = '<div class="empty" style="padding:24px 0"><div class="ed">暂无数据</div>' +
+      "<div>采集满 1 分钟后开始统计</div></div>";
+  } else {
+    const max = Math.max.apply(null, hist.map(h => h[1]));
+    $("#pwVKick").textContent = total.toLocaleString() + " 个 1 分钟样本";
+    let extra = "";
+    if (hist.length <= 4 && total) {
+      // 电压稳的时候只有两三个桶，卡片会空一大片，用一句话把结论说清楚
+      const top = hist.slice().sort((a, b) => b[1] - a[1])[0];
+      const bad = (q.under_pct || 0) + (q.over_pct || 0);
+      extra = '<div class="hnote" style="border-top:none;padding-top:0;margin-top:16px">' +
+        "电压绝大部分时间落在 " + top[0] + "–" + (top[0] + 5) + " V（" +
+        (top[1] * 100 / total).toFixed(0) + "%），整体范围 " +
+        fmt(q.v_min, 1) + "–" + fmt(q.v_max, 1) + " V，" +
+        (bad === 0 ? "统计期内没有出现越界。" : "存在越界样本，详见右侧占比。") + "</div>";
+    }
+    $("#pwHist").innerHTML = hist.map(([lo, n]) => {
+      const bad = (lo < lim.v_low || lo >= lim.v_high);
+      const pct = n * 100 / total;
+      return '<div class="hist-row"><div class="hk">' + lo + "–" + (lo + 5) + " V</div>" +
+        '<div class="hist-track"><i' + (bad ? ' class="c"' : "") +
+        ' style="width:' + Math.max(1.5, n / max * 100).toFixed(1) + '%"></i></div>' +
+        '<div class="hp">' + (pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)) + "%</div></div>";
+    }).join("") + extra;
+  }
+
+  /* 电能质量：越界为 0 时不加色，避免全屏都是橙色 */
+  const pctCell = (v, cls) => (v === null || v === undefined)
+    ? NA : fmt(v, 2) + '<span class="u">%</span>';
+  const rows = [
+    ["电压均值", q.v_avg == null ? NA : fmt(q.v_avg, 1) + '<span class="u">V</span>', ""],
+    ["电压范围", q.v_min == null ? NA
+      : fmt(q.v_min, 1) + "–" + fmt(q.v_max, 1) + '<span class="u">V</span>', ""],
+    ["欠压 <" + lim.v_low + " V", pctCell(q.under_pct), q.under_pct > 0 ? "w" : ""],
+    ["过压 >" + lim.v_high + " V", pctCell(q.over_pct), q.over_pct > 0 ? "w" : ""],
+    ["频率均值", q.hz_avg == null ? NA : fmt(q.hz_avg, 2) + '<span class="u">Hz</span>', ""],
+    ["频率越界", pctCell(q.hz_bad_pct), q.hz_bad_pct > 0 ? "w" : ""],
+  ];
+  $("#pwQuality").innerHTML = rows.map(([k, v, cls]) =>
+    '<div class="vrow"><div class="vk"><div class="cn">' + esc(k) + "</div></div>" +
+    '<div class="vv ' + cls + '">' + v + "</div></div>").join("");
+
+  /* 最近停电 */
+  const rec = j.recent_outages || [];
+  $("#pwRecent").innerHTML = rec.length ? rec.map(c => {
+    const extra = [];
+    if (c.avg_power) extra.push("平均 " + fmt(c.avg_power, 0) + " W");
+    if (c.start_chg != null && c.end_chg != null)
+      extra.push("电量 " + fmt(c.start_chg, 0) + "%→" + fmt(c.end_chg, 0) + "%");
+    return '<div class="vrow"><div class="vk"><div class="cn">' + esc(ymd(c.start_ts)) + "</div>" +
+      '<div class="key">持续 ' + esc(durText(c.dur_s)) + (extra.length ? " · " + extra.join(" · ") : "") +
+      "</div></div>" +
+      '<div class="vv">' + (c.wh ? fmt(c.wh, 1) + '<span class="u">Wh</span>' : NA) + "</div></div>";
+  }).join("") : '<div class="empty" style="padding:20px 0"><div class="ed">窗口内没有停电记录</div></div>';
+}
+
+$("#pwSeg").onclick = e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  $$("#pwSeg button").forEach(x => x.classList.toggle("on", x === b));
+  S.pwDays = parseInt(b.dataset.d, 10) || 30;
+  loadPower();
+};
 
 /* ---------------- 变量 ---------------- */
 async function loadVars() {
@@ -1689,6 +1884,7 @@ async function refreshOnce() {
   if (S.page === "overview") { loadHistory(); loadRecent(); }
   if (S.page === "events") loadEvents();
   if (S.page === "vars") loadVars();
+  if (S.page === "power") loadPower();
   if ($("#sheet").classList.contains("on")) { renderData(); renderAbout(); }
 }
 

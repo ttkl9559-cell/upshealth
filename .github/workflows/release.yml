@@ -34,6 +34,12 @@ jobs:
           python tools/layout_test.py
           echo "--- 通知推送端到端（假 SMTP / 假 Webhook）"
           python tools/notify_test.py
+          echo "--- 电池健康判定（正常电池不许判成建议更换）"
+          python tools/assess_test.py
+          echo "--- 市电统计口径（OB 的 0V 不算欠压 / 测试不算停电）"
+          python tools/power_test.py
+          echo "--- 采集器行为（失联只记一条 / 无效帧剔除）"
+          python tools/collector_test.py
 
       - name: Build fpk (x86_64 + arm64)
         run: python build_fpk.py --both
