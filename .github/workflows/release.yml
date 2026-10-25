@@ -32,6 +32,8 @@ jobs:
           python tools/detect_test.py
           echo "--- fpk 真实布局冒烟"
           python tools/layout_test.py
+          echo "--- 通知推送端到端（假 SMTP / 假 Webhook）"
+          python tools/notify_test.py
 
       - name: Build fpk (x86_64 + arm64)
         run: python build_fpk.py --both

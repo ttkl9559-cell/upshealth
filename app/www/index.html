@@ -249,6 +249,34 @@ a{color:inherit;text-decoration:none}
   border:.5px solid var(--line-strong);background:var(--card);color:var(--ink-1);outline:none;width:118px;text-align:right}
 .field input:focus,.field select:focus{border-color:var(--accent-ring)}
 .field input.wide{width:190px;text-align:left}
+
+/* ---------- 通知设置 ---------- */
+.chipset{display:flex;flex-wrap:wrap;gap:6px;padding:2px 0 12px}
+.chip{font:600 11.5px/1 var(--font-sans);padding:7px 11px;border-radius:var(--r-pill);
+  background:var(--fill-1);color:var(--ink-3);border:.5px solid transparent;transition:all var(--dur-1) var(--ease)}
+.chip.on{background:var(--card);color:var(--ink-1);box-shadow:0 1px 3px rgba(0,0,0,.07);border-color:var(--line-strong)}
+.chip.on.lv-crit{color:var(--crit)}
+.chip.on.lv-warn{color:var(--warn)}
+.chip.on.lv-ok{color:var(--ok)}
+.chcard{border:.5px solid var(--line);border-radius:var(--r-md);padding:12px 13px;margin-bottom:10px;
+  background:var(--card-sunk)}
+.chhead{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.chhead .tk{font:600 10px/1 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);padding:4px 7px;border-radius:var(--r-pill);background:var(--fill-1)}
+.chhead .nm{font:600 13px/1.2 var(--font-sans);flex:1;min-width:0}
+.chrow{display:grid;grid-template-columns:74px minmax(0,1fr);gap:8px;align-items:center;margin-top:7px}
+.chrow label{font-size:11.5px;color:var(--ink-3);text-align:right}
+.chrow input,.chrow select{font:500 12px/1.3 var(--font-mono);padding:7px 9px;border-radius:9px;
+  border:.5px solid var(--line-strong);background:var(--card);color:var(--ink-1);width:100%;min-width:0}
+.chrow input:focus,.chrow select:focus{border-color:var(--accent-ring);outline:none}
+.chacts{display:flex;gap:7px;margin-top:11px;flex-wrap:wrap}
+.ntlog{font:11.5px/1.5 var(--font-mono);color:var(--ink-2);padding:3px 0;
+  border-bottom:.5px dashed var(--line);display:flex;gap:8px}
+.ntlog:last-child{border-bottom:none}
+.ntlog .t{color:var(--ink-3);flex:none}
+.ntlog .ok{color:var(--ok)}
+.ntlog .bad{color:var(--crit)}
+.ntlog .m{flex:1;min-width:0;overflow-wrap:anywhere}
 .sw{width:44px;height:26px;border-radius:var(--r-pill);background:var(--fill-3);position:relative;transition:background var(--dur-2);flex:0 0 auto}
 .sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
   background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.2);transition:transform var(--dur-2) var(--ease)}
@@ -579,6 +607,15 @@ a{color:inherit;text-decoration:none}
           <option value="yellow">琥珀</option>
         </select>
       </div>
+    </div>
+
+    <div class="sheet-sec">通知</div>
+    <div class="card tight">
+      <div class="field">
+        <div class="field-l"><div class="nm">事件推送</div><div class="hint">断电、恢复、低电量等事件推到手机或邮箱</div></div>
+        <div class="sw" id="setNotify"></div>
+      </div>
+      <div id="notifyZone"></div>
     </div>
 
     <div class="sheet-sec">数据</div>
@@ -1255,6 +1292,7 @@ async function loadSettings() {
   $("#setDod").value = c.battery_dod;
   $("#setMirror").value = c.update_mirror || "";
   $("#setAutoUpd").classList.toggle("on", !!c.auto_check_update);
+  loadNotify(j);
   renderUpdate();
   renderData();
   renderAbout();
@@ -1278,6 +1316,253 @@ $("#setAutoUpd").onclick = e => {
 };
 $("#setTheme").onchange = e => { LS.set("theme", e.target.value); applyTheme(); };
 $("#setAccent").onchange = e => { LS.set("accent", e.target.value); applyTheme(); };
+
+/* ---------------- 通知 ---------------- */
+const CH_FIELDS = {
+  smtp: [
+    ["host", "服务器", "text", "smtp.qq.com"],
+    ["port", "端口", "number", "465"],
+    ["tls", "加密", "select", ["ssl", "starttls", "plain"]],
+    ["user", "账号", "text", "you@qq.com"],
+    ["pass", "授权码", "password", ""],
+    ["from", "发件人", "text", "留空 = 账号"],
+    ["to", "收件人", "text", "多个用逗号分隔"],
+  ],
+  wecom: [["url", "Webhook", "text", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key="]],
+  dingtalk: [["url", "Webhook", "text", "https://oapi.dingtalk.com/robot/send?access_token="]],
+  bark: [["key", "Device Key", "text", ""], ["url", "服务地址", "text", "https://api.day.app"]],
+  serverchan: [["key", "SendKey", "text", "SCT…"], ["url", "接口地址", "text", "留空用官方"]],
+  webhook: [["url", "URL", "text", "https://"]],
+};
+const CH_DEFAULT = {
+  smtp: { host: "", port: 465, tls: "ssl", user: "", pass: "", from: "", to: "" },
+  wecom: { url: "" },
+  dingtalk: { url: "" },
+  bark: { key: "", url: "https://api.day.app" },
+  serverchan: { key: "", url: "" },
+  webhook: { url: "" },
+};
+let ntEV = [], ntMeta = {}, ntTypes = {}, ntAdding = false;
+
+function loadNotify(j) {
+  const c = (j && j.config) || {};
+  ntEV = (j && j.notify_events) || [];
+  ntMeta = (j && j.event_meta) || {};
+  ntTypes = (j && j.channels) || {};
+  S.notify = {
+    enabled: !!c.notify_enabled,
+    events: (c.notify_events || []).slice(),
+    channels: JSON.parse(JSON.stringify(c.notify_channels || [])),
+    debounce: c.notify_debounce_s == null ? 60 : c.notify_debounce_s,
+    maxpm: c.notify_max_per_min == null ? 8 : c.notify_max_per_min,
+    quiet: c.notify_quiet || "",
+    base: c.notify_base_url || "",
+  };
+  $("#setNotify").classList.toggle("on", S.notify.enabled);
+  renderNotify();
+}
+
+function chCard(ch, i) {
+  const cfg = ch.config || {};
+  const rows = (CH_FIELDS[ch.type] || []).map(([k, label, kind, ph]) => {
+    const v = cfg[k] === undefined || cfg[k] === null ? "" : cfg[k];
+    let inp;
+    if (kind === "select") {
+      inp = '<select data-i="' + i + '" data-k="' + k + '">' +
+        ph.map(o => '<option value="' + o + '"' + (String(v) === o ? " selected" : "") + ">" +
+          esc(o) + "</option>").join("") + "</select>";
+    } else {
+      const tp = kind === "password" ? "password" : kind === "number" ? "number" : "text";
+      inp = '<input data-i="' + i + '" data-k="' + k + '" type="' + tp + '" value="' + esc(v) +
+        '" placeholder="' + esc(ph || "") + '">';
+    }
+    return '<div class="chrow"><label>' + label + "</label>" + inp + "</div>";
+  }).join("");
+
+  return '<div class="chcard">' +
+    '<div class="chhead"><span class="tk">' + esc(ntTypes[ch.type] || ch.type) + "</span>" +
+    '<input data-i="' + i + '" data-nm="1" value="' + esc(ch.name || "") +
+    '" style="font:600 13px/1.2 var(--font-sans);border:none;background:transparent;color:var(--ink-1);flex:1;min-width:0">' +
+    '<div class="sw' + (ch.enabled !== false ? " on" : "") + '" data-i="' + i + '" data-tg="1"></div></div>' +
+    rows +
+    '<div class="chacts"><button class="btn sm" data-i="' + i + '" data-test="1">测试</button>' +
+    '<button class="btn sm" data-i="' + i + '" data-del="1">删除</button></div></div>';
+}
+
+function renderNotify() {
+  const z = $("#notifyZone"), n = S.notify;
+  if (!z) return;
+  if (!n) { z.innerHTML = ""; return; }
+
+  let h = '<div class="chipset">' + ntEV.map(t => {
+    const m = ntMeta[t] || { label: t, level: "info" };
+    return '<button class="chip lv-' + m.level + (n.events.includes(t) ? " on" : "") +
+      '" data-ev="' + t + '">' + esc(m.label) + "</button>";
+  }).join("") + "</div>";
+
+  h += '<div class="field"><div class="field-l"><div class="nm">推送通道</div>' +
+    '<div class="hint">可同时配多个。密码类字段显示 <code class="mono-sm">***</code> 表示已保存，不改就留着</div></div>' +
+    '<button class="btn sm" id="btnAddCh">添加</button></div>';
+
+  if (ntAdding) {
+    h += '<div class="chipset">' + Object.keys(ntTypes).map(t =>
+      '<button class="chip" data-add="' + t + '">' + esc(ntTypes[t]) + "</button>").join("") +
+      '<button class="chip" data-cancel="1">取消</button></div>';
+  }
+
+  h += '<div id="ntChList">';
+  if (!n.channels.length) {
+    h += '<div class="hint" style="padding:4px 0 12px">还没有通道。点「添加」配一个，配完先点「测试」确认能收到。</div>';
+  }
+  n.channels.forEach((ch, i) => { h += chCard(ch, i); });
+  h += "</div>";
+
+  h += '<div class="chrow"><label>去抖</label><input id="ntDeb" type="number" min="0" max="3600" value="' +
+    n.debounce + '" placeholder="秒"></div>' +
+    '<div class="chrow"><label>限流</label><input id="ntMax" type="number" min="1" max="120" value="' +
+    n.maxpm + '" placeholder="条/分钟"></div>' +
+    '<div class="chrow"><label>静音时段</label><input id="ntQuiet" type="text" value="' + esc(n.quiet) +
+    '" placeholder="如 23:00-07:00，留空不启用；严重事件不受静音影响"></div>' +
+    '<div class="chrow"><label>访问地址</label><input id="ntBase" type="text" value="' + esc(n.base) +
+    '" placeholder="http://192.168.1.10:8778，会附在通知末尾"></div>';
+
+  h += '<div class="chacts" style="margin-top:13px">' +
+    '<button class="btn pri sm" id="btnSaveNt">保存通知设置</button>' +
+    '<button class="btn sm" id="btnTestAll">测试全部通道</button></div>';
+
+  h += '<div style="margin-top:14px"><div class="hint" style="margin-bottom:5px">最近推送</div>' +
+    '<div id="ntLogs"><div class="hint">—</div></div></div>';
+
+  z.innerHTML = h;
+  loadNotifyLogs();
+}
+
+async function loadNotifyLogs() {
+  const box = $("#ntLogs");
+  if (!box) return;
+  const j = await api("/api/notify/log?limit=8");
+  const rows = (j && j.logs) || [];
+  if (!rows.length) { box.innerHTML = '<div class="hint">还没有推送记录</div>'; return; }
+  box.innerHTML = rows.map(r => {
+    const d = new Date(r.ts * 1000);
+    const hh = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    const msg = r.ok ? ("已送达 · " + (r.channel || ""))
+      : ((r.err || "失败") + (r.channel && r.channel !== "-" ? " · " + r.channel : ""));
+    return '<div class="ntlog"><span class="t">' + hh + '</span><span class="' +
+      (r.ok ? "ok" : "bad") + '">' + (r.ok ? "✓" : "✕") + '</span><span class="m">' +
+      esc(msg) + "</span></div>";
+  }).join("");
+}
+
+$("#setNotify").onclick = async e => {
+  const on = !e.currentTarget.classList.contains("on");
+  e.currentTarget.classList.toggle("on", on);
+  if (S.notify) S.notify.enabled = on;
+  const j = await post("/api/notify/save", { notify_enabled: on });
+  if (!j || !j.ok) toast((j && j.error) || "保存失败");
+  renderNotify();
+};
+
+(function ntBind() {
+  const z = $("#notifyZone");
+  if (!z) return;
+
+  z.addEventListener("click", async e => {
+    const n = S.notify;
+    if (!n) return;
+
+    const chip = e.target.closest("[data-ev]");
+    if (chip) {
+      const t = chip.dataset.ev, k = n.events.indexOf(t);
+      if (k >= 0) n.events.splice(k, 1); else n.events.push(t);
+      renderNotify();
+      return;
+    }
+    const add = e.target.closest("[data-add]");
+    if (add) {
+      const typ = add.dataset.add;
+      n.channels.push({
+        id: "c" + Date.now().toString(36),
+        type: typ,
+        name: ntTypes[typ] || typ,
+        enabled: true,
+        config: JSON.parse(JSON.stringify(CH_DEFAULT[typ] || {})),
+      });
+      ntAdding = false;
+      renderNotify();
+      return;
+    }
+    if (e.target.closest("[data-cancel]")) { ntAdding = false; renderNotify(); return; }
+    if (e.target.closest("#btnAddCh")) { ntAdding = !ntAdding; renderNotify(); return; }
+
+    const tg = e.target.closest("[data-tg]");
+    if (tg) {
+      const c = n.channels[+tg.dataset.i];
+      if (c) c.enabled = !(c.enabled !== false);
+      renderNotify();
+      return;
+    }
+    const del = e.target.closest("[data-del]");
+    if (del) { n.channels.splice(+del.dataset.del, 1); renderNotify(); return; }
+
+    const tb = e.target.closest("[data-test]");
+    if (tb) {
+      const i = +tb.dataset.i, ch = n.channels[i];
+      if (!ch) return;
+      tb.disabled = true; tb.textContent = "发送中…";
+      const j = await post("/api/notify/test", { channel: ch });
+      tb.disabled = false; tb.textContent = "测试";
+      if (j && j.ok) toast("测试消息已发出，去收一下");
+      else toast("发送失败：" + ((j && j.error) || "未知错误"), 6000);
+      loadNotifyLogs();
+      return;
+    }
+
+    if (e.target.closest("#btnTestAll")) {
+      const b = e.target.closest("#btnTestAll");
+      b.disabled = true; b.textContent = "发送中…";
+      const j = await post("/api/notify/test", {});
+      b.disabled = false; b.textContent = "测试全部通道";
+      const rs = (j && j.results) || [];
+      const bad = rs.filter(r => !r.ok);
+      toast(bad.length ? ("失败 " + bad.length + " 个：" + bad.map(r => r.channel).join("、")) : "全部通道测试成功",
+        bad.length ? 6000 : 2600);
+      loadNotifyLogs();
+      return;
+    }
+
+    if (e.target.closest("#btnSaveNt")) {
+      const b = e.target.closest("#btnSaveNt");
+      b.disabled = true; b.textContent = "保存中…";
+      const j = await post("/api/notify/save", {
+        notify_enabled: n.enabled,
+        notify_events: n.events,
+        notify_channels: n.channels,
+        notify_debounce_s: n.debounce,
+        notify_max_per_min: n.maxpm,
+        notify_quiet: n.quiet,
+        notify_base_url: n.base,
+      });
+      b.disabled = false; b.textContent = "保存通知设置";
+      if (j && j.ok) { toast("已保存"); await loadSettings(); }
+      else toast((j && j.error) || "保存失败", 5000);
+      return;
+    }
+  });
+
+  z.addEventListener("input", e => {
+    const n = S.notify, t = e.target;
+    if (!n) return;
+    if (t.dataset.i !== undefined && t.dataset.k) {
+      n.channels[+t.dataset.i].config[t.dataset.k] = t.value;
+    } else if (t.dataset.i !== undefined && t.dataset.nm) {
+      n.channels[+t.dataset.i].name = t.value;
+    } else if (t.id === "ntDeb") n.debounce = Math.max(0, parseInt(t.value, 10) || 0);
+    else if (t.id === "ntMax") n.maxpm = Math.max(1, parseInt(t.value, 10) || 8);
+    else if (t.id === "ntQuiet") n.quiet = t.value;
+    else if (t.id === "ntBase") n.base = t.value;
+  });
+})();
 
 /* ---------------- 更新 ---------------- */
 function renderUpdate() {

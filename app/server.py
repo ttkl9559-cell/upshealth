@@ -21,7 +21,9 @@ import re
 import json
 import time
 import gzip
+import queue
 import shutil
+import smtplib
 import sqlite3
 import hashlib
 import tarfile
@@ -30,15 +32,19 @@ import platform
 import threading
 import subprocess
 import mimetypes
+from collections import deque
+from email.mime.text import MIMEText
+from email.header import Header
+from email.utils import formataddr, formatdate
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode
 from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 from urllib.error import URLError, HTTPError
 from html import unescape
 
 APP_NAME = "upshealth"
 APP_CN = "UPS 健康"
-FALLBACK_VERSION = "1.0.1"
+FALLBACK_VERSION = "1.1.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.environ.get("TRIM_APPDEST") or os.path.dirname(HERE)
@@ -257,6 +263,15 @@ DEFAULT_CFG = {
     "retain_1m_d": 30,
     "retain_10m_d": 1095,
     "range_default": "1h",
+    # ---- 通知推送 ----
+    "notify_enabled": False,
+    "notify_events": ["POWER_LOSS", "POWER_RESTORE", "LOW_BATTERY",
+                      "REPLACE_BATTERY", "ALARM", "OVERLOAD", "FORCED_SHUTDOWN"],
+    "notify_channels": [],
+    "notify_debounce_s": 60,     # 同类事件去抖窗口
+    "notify_max_per_min": 8,     # 全局限流
+    "notify_quiet": "",          # 静音时段，如 "23:00-07:00"，留空不启用
+    "notify_base_url": "",       # 通知里附带的访问地址，留空自动取本机
 }
 
 
@@ -499,6 +514,18 @@ CREATE TABLE IF NOT EXISTS events(
 CREATE INDEX IF NOT EXISTS ix_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS ix_events_type ON events(type, ts);
 
+CREATE TABLE IF NOT EXISTS notify_log(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  event TEXT,
+  channel TEXT,
+  kind TEXT,
+  ok INTEGER,
+  err TEXT,
+  title TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_notify_log_ts ON notify_log(ts);
+
 CREATE TABLE IF NOT EXISTS cycles(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   start_ts INTEGER, end_ts INTEGER,
@@ -539,6 +566,11 @@ CREATE TABLE IF NOT EXISTS baselines(
                  ev.get("to_st"), ev.get("chg"), ev.get("rt"), ev.get("in_v"),
                  ev.get("out_v"), ev.get("load"), ev.get("temp"), ev.get("note")))
             c.commit()
+        # 入队即返回，真正的发送在通知线程里做
+        try:
+            NOTIFIER.on_event(ev)
+        except Exception as e:
+            log("事件投递通知失败：%s" % e, "warn")
 
     def add_cycle(self, cyc):
         with self.lock:
@@ -550,6 +582,27 @@ CREATE TABLE IF NOT EXISTS baselines(
                  cyc.get("end_chg"), cyc.get("min_rt"), cyc.get("avg_power"),
                  cyc.get("wh"), cyc.get("kind", "unknown"), cyc.get("note")))
             c.commit()
+
+    def add_notify_log(self, rec):
+        with self.lock:
+            c = self.conn()
+            c.execute(
+                "INSERT INTO notify_log(ts,event,channel,kind,ok,err,title) VALUES(?,?,?,?,?,?,?)",
+                (rec.get("ts") or int(time.time()), rec.get("event"), rec.get("channel"),
+                 rec.get("kind"), 1 if rec.get("ok") else 0, rec.get("err"),
+                 rec.get("title")))
+            # 只留最近 300 条，避免无限增长
+            c.execute("DELETE FROM notify_log WHERE id<?",
+                      ((c.execute("SELECT MAX(id) FROM notify_log").fetchone()[0] or 0) - 300,))
+            c.commit()
+
+    def notify_logs(self, limit=50):
+        c = self.conn()
+        rows = c.execute(
+            "SELECT ts,event,channel,kind,ok,err,title FROM notify_log "
+            "ORDER BY ts DESC LIMIT ?", (int(limit),)).fetchall()
+        return [dict(zip(("ts", "event", "channel", "kind", "ok", "err", "title"), r))
+                for r in rows]
 
     # ---------- 查询 ----------
     def last_sample(self):
@@ -710,6 +763,396 @@ CREATE TABLE IF NOT EXISTS baselines(
 
 
 STORE = Store(DB_PATH)
+
+
+# ======================================================================
+# 通知推送
+#
+# 通道类型：
+#   smtp        邮件（465 SSL / 587 STARTTLS / 25 明文）
+#   wecom       企业微信群机器人
+#   dingtalk    钉钉群机器人
+#   bark        Bark（iOS 推送）
+#   serverchan  Server酱
+#   webhook     通用 JSON POST，字段 title/body/event/level/level_cn/ts/device
+#
+# 触发点统一在 Store.add_event，采集器 / 盲区 / 更新都走同一条路。
+# 发送在独立线程里跑，绝不阻塞采集。
+# ======================================================================
+
+EVENT_META = {
+    "POWER_LOSS":      ("市电中断", "crit"),
+    "POWER_RESTORE":   ("市电恢复", "ok"),
+    "LOW_BATTERY":     ("电池电量过低", "crit"),
+    "REPLACE_BATTERY": ("需要更换电池", "warn"),
+    "ALARM":           ("UPS 告警", "warn"),
+    "OVERLOAD":        ("输出过载", "crit"),
+    "FORCED_SHUTDOWN": ("UPS 强制关机", "crit"),
+    "CHARGE_JUMP":     ("电量计异常跳变", "warn"),
+    "DEVICE_CHANGED":  ("UPS 设备变化", "info"),
+    "VARS_CHANGED":    ("变量集变化", "info"),
+    "BLIND_SPOT":      ("观测盲区", "warn"),
+    "UPDATE":          ("应用已更新", "info"),
+    "INIT":            ("开始观测", "info"),
+    "SESSION_START":   ("服务启动", "info"),
+    "TEST":            ("测试消息", "ok"),
+}
+
+# 可勾选的事件（SESSION_START / INIT / VARS_CHANGED 之类不放进来自扰）
+NOTIFY_EVENT_CHOICES = [
+    "POWER_LOSS", "POWER_RESTORE", "LOW_BATTERY", "REPLACE_BATTERY",
+    "ALARM", "OVERLOAD", "FORCED_SHUTDOWN", "CHARGE_JUMP",
+    "BLIND_SPOT", "DEVICE_CHANGED", "UPDATE",
+]
+
+LEVEL_TAG = {"crit": "【严重】", "warn": "【警告】", "ok": "【恢复】", "info": "【提示】"}
+
+CHANNEL_META = {
+    "smtp":       "邮件 SMTP",
+    "wecom":      "企业微信机器人",
+    "dingtalk":   "钉钉机器人",
+    "bark":       "Bark（iOS）",
+    "serverchan": "Server 酱",
+    "webhook":    "通用 Webhook",
+}
+
+SECRET_FIELDS = ("pass", "password", "token", "key", "secret")
+
+
+def _fmt_ts(ts):
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(ts)))
+    except Exception:
+        return "—"
+
+
+def fmt_dur(sec):
+    """秒 → 3 小时 12 分 / 19 分 30 秒"""
+    try:
+        sec = int(sec)
+    except Exception:
+        return "—"
+    if sec <= 0:
+        return "—"
+    h, m, s = sec // 3600, (sec % 3600) // 60, sec % 60
+    if h:
+        return "%d 小时 %d 分" % (h, m)
+    if m:
+        return "%d 分 %d 秒" % (m, s)
+    return "%d 秒" % s
+
+
+def mask_url(u):
+    """把 URL 里的密钥部分抹掉，既能给人看又不泄露。"""
+    if not u:
+        return u
+    u = re.sub(r"([?&](?:key|token|access_token|secret|sign|pwd|password)=)[^&]*",
+               r"\1***", str(u), flags=re.I)
+    u = re.sub(r"(sctapi\.ftqq\.com/)[^/]+", r"\1***", u)
+    u = re.sub(r"(api\.day\.app/)[^/?]+", r"\1***", u)
+    return u
+
+
+def mask_channel(ch):
+    """接口返回前调用：密码类字段一律 ***，URL 只保留主机与路径。"""
+    out = dict(ch or {})
+    cfg = dict(out.get("config") or {})
+    for k in list(cfg):
+        if k in SECRET_FIELDS and cfg[k]:
+            cfg[k] = "***"
+        elif k == "url":
+            cfg[k] = mask_url(cfg[k])
+    out["config"] = cfg
+    return out
+
+
+def merge_secrets(new_cfg, old_cfg):
+    """保存时把界面回传的 *** 占位符还原成库里的真实值。"""
+    out = dict(new_cfg or {})
+    old = old_cfg or {}
+    for k, v in list(out.items()):
+        if isinstance(v, str) and "***" in v and old.get(k):
+            out[k] = old[k]
+    for k in SECRET_FIELDS:
+        if k not in out and old.get(k):
+            out[k] = old[k]
+    return out
+
+
+def cfg_public():
+    """对外的配置副本：通知通道里的密码、Webhook 密钥全部脱敏。"""
+    cfg = dict(CFG)
+    cfg["notify_channels"] = [mask_channel(c) for c in (CFG.get("notify_channels") or [])]
+    return cfg
+
+
+def build_message(ev, device=None):
+    """把事件渲染成 (标题, 正文, 级别)。"""
+    t = ev.get("type") or ""
+    label, level = EVENT_META.get(t, (t or "事件", "info"))
+    dev = device or {}
+    name = " ".join([x for x in (dev.get("mfr"), dev.get("model")) if x]) \
+        or ev.get("ups") or "UPS"
+    title = "%s%s · %s" % (LEVEL_TAG.get(level, ""), label, name)
+
+    lines = ["时间：%s" % _fmt_ts(ev.get("ts") or time.time())]
+    if ev.get("note"):
+        lines.append("说明：%s" % ev["note"])
+    if ev.get("from_st") or ev.get("to_st"):
+        lines.append("状态：%s → %s" % (ev.get("from_st") or "—", ev.get("to_st") or "—"))
+    if ev.get("chg") is not None:
+        lines.append("电量：%.0f%%" % ev["chg"])
+    if ev.get("rt") is not None:
+        lines.append("剩余续航：%s" % fmt_dur(ev["rt"]))
+    if ev.get("in_v") is not None or ev.get("out_v") is not None:
+        inv = "%.0f" % ev["in_v"] if ev.get("in_v") is not None else "—"
+        outv = "%.0f" % ev["out_v"] if ev.get("out_v") is not None else "—"
+        lines.append("电压：输入 %s V / 输出 %s V" % (inv, outv))
+    if ev.get("load") is not None:
+        lines.append("负载：%.0f%%" % ev["load"])
+    if ev.get("temp") is not None:
+        lines.append("电池温度：%.1f ℃" % ev["temp"])
+    if dev.get("serial"):
+        lines.append("序列号：%s" % dev["serial"])
+
+    base = (CFG.get("notify_base_url") or "").strip().rstrip("/")
+    if base:
+        lines.append("")
+        lines.append(base)
+    return title, "\n".join(lines), level
+
+
+def _post_json(url, payload, timeout=15):
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = Request(url, data=data, headers={
+        "Content-Type": "application/json",
+        "User-Agent": "upshealth/" + VERSION,
+    })
+    with urlopen(req, timeout=timeout) as r:
+        return r.read(8192).decode("utf-8", "replace")
+
+
+def _post_form(url, fields, timeout=15):
+    data = urlencode(fields).encode("utf-8")
+    req = Request(url, data=data, headers={
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "upshealth/" + VERSION,
+    })
+    with urlopen(req, timeout=timeout) as r:
+        return r.read(8192).decode("utf-8", "replace")
+
+
+def _check_bot_resp(txt, who):
+    """企微 / 钉钉 返回 errcode!=0 时要当失败处理，否则静默丢消息很难查。"""
+    try:
+        j = json.loads(txt)
+    except Exception:
+        return
+    if not isinstance(j, dict):
+        return
+    code = j.get("errcode", j.get("code", 0))
+    if code not in (0, None):
+        raise RuntimeError("%s 返回错误 %s：%s" % (who, code, j.get("errmsg") or j.get("message") or ""))
+
+
+class Notifier:
+    def __init__(self):
+        self.q = queue.Queue(maxsize=200)
+        self._started = False
+        self._lock = threading.Lock()
+        self._last_ts = {}      # 事件类型 → 上次发送时间（去抖）
+        self._window = deque()  # 全局限流窗口
+
+    # ---------- 入口 ----------
+    def on_event(self, ev):
+        if not CFG.get("notify_enabled"):
+            return
+        if ev.get("type") not in (CFG.get("notify_events") or []):
+            return
+        self._ensure()
+        try:
+            self.q.put_nowait(dict(ev))
+        except queue.Full:
+            log("通知队列已满，丢弃事件 %s" % ev.get("type"), "warn")
+
+    def _ensure(self):
+        with self._lock:
+            if self._started:
+                return
+            t = threading.Thread(target=self._run, name="notifier", daemon=True)
+            t.start()
+            self._started = True
+
+    def _run(self):
+        while True:
+            try:
+                ev = self.q.get()
+            except Exception:
+                continue
+            try:
+                self._handle(ev)
+            except Exception as e:
+                log("通知处理异常：%s" % e, "error")
+
+    # ---------- 判定 ----------
+    def _in_quiet(self):
+        spec = (CFG.get("notify_quiet") or "").strip()
+        if not spec or "-" not in spec:
+            return False
+        try:
+            a, b = spec.split("-", 1)
+            ah, am = [int(x) for x in a.strip().split(":")]
+            bh, bm = [int(x) for x in b.strip().split(":")]
+        except Exception:
+            return False
+        now = time.localtime()
+        cur = now.tm_hour * 60 + now.tm_min
+        s, e = ah * 60 + am, bh * 60 + bm
+        return (s <= cur < e) if s <= e else (cur >= s or cur < e)
+
+    def _throttled(self, ev_type):
+        now = time.time()
+        win = max(0, int(CFG.get("notify_debounce_s") or 0))
+        last = self._last_ts.get(ev_type)
+        if win and last and now - last < win:
+            return "同类事件 %d 秒内已发过（去抖）" % win
+        limit = max(1, int(CFG.get("notify_max_per_min") or 8))
+        while self._window and now - self._window[0] > 60:
+            self._window.popleft()
+        if len(self._window) >= limit:
+            return "超过每分钟 %d 条上限（限流）" % limit
+        return None
+
+    def _handle(self, ev):
+        t = ev.get("type") or ""
+        _, level = EVENT_META.get(t, (t, "info"))
+        if level != "crit" and self._in_quiet():
+            log("静音时段，跳过 %s 通知" % t)
+            STORE.add_notify_log({"event": t, "channel": "-", "kind": "skip",
+                                  "ok": False, "err": "静音时段", "title": t})
+            return
+        why = self._throttled(t)
+        if why:
+            log("跳过 %s 通知：%s" % (t, why))
+            STORE.add_notify_log({"event": t, "channel": "-", "kind": "skip",
+                                  "ok": False, "err": why, "title": t})
+            return
+
+        snap = None
+        try:
+            snap = COLLECTOR.snap
+        except Exception:
+            pass
+        title, body, level = build_message(ev, (snap or {}).get("device"))
+        res = self.dispatch(title, body, t, level)
+        if any(r.get("ok") for r in res):
+            self._last_ts[t] = time.time()
+            self._window.append(time.time())
+
+    # ---------- 发送 ----------
+    def dispatch(self, title, body, ev_type="TEST", level="info"):
+        chs = [c for c in (CFG.get("notify_channels") or []) if c.get("enabled", True)]
+        if not chs:
+            return [{"ok": False, "channel": "-", "err": "未启用任何通道"}]
+        out = []
+        for ch in chs:
+            name = ch.get("name") or CHANNEL_META.get(ch.get("type"), ch.get("type"))
+            ok, err = self.send_one(ch, title, body, ev_type, level)
+            STORE.add_notify_log({"event": ev_type, "channel": name,
+                                  "kind": ch.get("type"), "ok": ok, "err": err,
+                                  "title": title})
+            if ok:
+                log("已推送「%s」→ %s" % (title, name))
+            else:
+                log("推送失败「%s」→ %s：%s" % (title, name, err), "warn")
+            out.append({"ok": ok, "channel": name, "err": err})
+        return out
+
+    def send_one(self, ch, title, body, ev_type="TEST", level="info"):
+        typ = ch.get("type")
+        c = ch.get("config") or {}
+        try:
+            if typ == "smtp":
+                self._smtp(c, title, body)
+            elif typ in ("wecom", "dingtalk"):
+                url = (c.get("url") or "").strip()
+                if not url:
+                    raise RuntimeError("未填 Webhook 地址")
+                txt = _post_json(url, {"msgtype": "text",
+                                       "text": {"content": title + "\n" + body}})
+                _check_bot_resp(txt, CHANNEL_META[typ])
+            elif typ == "bark":
+                key = (c.get("key") or "").strip()
+                base = (c.get("url") or "https://api.day.app").strip().rstrip("/")
+                if not key:
+                    raise RuntimeError("未填 Bark device key")
+                txt = _post_json(base + "/push", {
+                    "device_key": key, "title": title, "body": body,
+                    "group": "upshealth", "level": "timeSensitive" if level == "crit" else "active",
+                })
+                _check_bot_resp(txt, "Bark")
+            elif typ == "serverchan":
+                key = (c.get("key") or "").strip()
+                if not key:
+                    raise RuntimeError("未填 SendKey")
+                url = (c.get("url") or "https://sctapi.ftqq.com/%s.send" % key).strip()
+                txt = _post_form(url, {"title": title, "desp": body})
+                _check_bot_resp(txt, "Server 酱")
+            elif typ == "webhook":
+                url = (c.get("url") or "").strip()
+                if not url:
+                    raise RuntimeError("未填 Webhook 地址")
+                txt = _post_json(url, {
+                    "title": title, "body": body, "text": title + "\n" + body,
+                    "event": ev_type, "level": level,
+                    "ts": int(time.time()),
+                    "source": "upshealth", "version": VERSION,
+                })
+            else:
+                raise RuntimeError("未知通道类型 %s" % typ)
+            return True, None
+        except Exception as e:
+            return False, str(e)[:300]
+
+    def _smtp(self, c, title, body):
+        host = (c.get("host") or "").strip()
+        to = [x for x in re.split(r"[,;\s]+", (c.get("to") or "")) if x]
+        if not host:
+            raise RuntimeError("未填 SMTP 服务器")
+        if not to:
+            raise RuntimeError("未填收件人")
+        port = int(c.get("port") or 465)
+        mode = (c.get("tls") or "ssl").lower()
+        user = (c.get("user") or "").strip()
+        pwd = c.get("pass") or ""
+        sender = (c.get("from") or user or "upshealth@localhost").strip()
+
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = Header(title, "utf-8")
+        msg["From"] = formataddr((str(Header("UPS 健康", "utf-8")), sender))
+        msg["To"] = ", ".join(to)
+        msg["Date"] = formatdate(localtime=True)
+
+        if mode == "ssl":
+            s = smtplib.SMTP_SSL(host, port, timeout=20)
+        else:
+            s = smtplib.SMTP(host, port, timeout=20)
+        try:
+            s.ehlo()
+            if mode == "starttls":
+                s.starttls()
+                s.ehlo()
+            if user:
+                s.login(user, pwd)
+            s.sendmail(sender, to, msg.as_string())
+        finally:
+            try:
+                s.quit()
+            except Exception:
+                pass
+
+
+NOTIFIER = Notifier()
 
 
 # ======================================================================
@@ -1584,7 +2027,17 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/meta":
                 return self._api_meta()
             if path == "/api/settings":
-                return self._json({"ok": True, "config": CFG})
+                return self._json({"ok": True, "config": cfg_public(),
+                                   "channels": CHANNEL_META,
+                                   "notify_events": NOTIFY_EVENT_CHOICES,
+                                   "event_meta": {k: {"label": v[0], "level": v[1]}
+                                                  for k, v in EVENT_META.items()}})
+            if path == "/api/notify/log":
+                try:
+                    limit = min(200, max(1, int((qs.get("limit") or ["40"])[0])))
+                except Exception:
+                    limit = 40
+                return self._json({"ok": True, "logs": STORE.notify_logs(limit)})
             if path == "/api/update/check":
                 # 用户手动点「检查更新」带 force=1，绕过 90 秒结果缓存
                 f = (qs.get("force") or ["0"])[0] not in ("0", "", "false")
@@ -1611,6 +2064,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._api_settings_save()
             if path == "/api/update/apply":
                 return self._api_update_apply()
+            if path == "/api/notify/save":
+                return self._api_notify_save()
+            if path == "/api/notify/test":
+                return self._api_notify_test()
             if path == "/api/collect-now":
                 threading.Thread(target=lambda: _safe_tick(), daemon=True).start()
                 return self._json({"ok": True})
@@ -1780,6 +2237,89 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
+    def _api_notify_save(self):
+        body = self._body()
+        old_chs = CFG.get("notify_channels") or []
+        old_by_id = {c.get("id"): c for c in old_chs if c.get("id")}
+
+        if "notify_enabled" in body:
+            CFG["notify_enabled"] = bool(body["notify_enabled"])
+        if "notify_events" in body:
+            evs = body.get("notify_events") or []
+            if not isinstance(evs, list):
+                return self._err(400, "notify_events 必须是数组")
+            CFG["notify_events"] = [str(x) for x in evs if str(x) in EVENT_META]
+        if "notify_debounce_s" in body:
+            CFG["notify_debounce_s"] = max(0, min(3600, int(body["notify_debounce_s"] or 0)))
+        if "notify_max_per_min" in body:
+            CFG["notify_max_per_min"] = max(1, min(120, int(body["notify_max_per_min"] or 8)))
+        if "notify_quiet" in body:
+            q = str(body.get("notify_quiet") or "").strip()
+            if q and not re.match(r"^\d{1,2}:\d{2}-\d{1,2}:\d{2}$", q):
+                return self._err(400, "静音时段格式应为 23:00-07:00")
+            CFG["notify_quiet"] = q
+        if "notify_base_url" in body:
+            CFG["notify_base_url"] = str(body.get("notify_base_url") or "").strip()
+
+        if "notify_channels" in body:
+            chs = body.get("notify_channels")
+            if not isinstance(chs, list):
+                return self._err(400, "notify_channels 必须是数组")
+            clean = []
+            seen = set()
+            for i, ch in enumerate(chs[:20]):
+                if not isinstance(ch, dict):
+                    continue
+                typ = ch.get("type")
+                if typ not in CHANNEL_META:
+                    return self._err(400, "未知通道类型：%s" % typ)
+                cid = str(ch.get("id") or "").strip() or ("c%d" % (i + 1))
+                if cid in seen:
+                    cid = "%s-%d" % (cid, i)
+                seen.add(cid)
+                cfg_old = (old_by_id.get(cid) or {}).get("config") or {}
+                clean.append({
+                    "id": cid,
+                    "type": typ,
+                    "name": str(ch.get("name") or CHANNEL_META[typ])[:40],
+                    "enabled": bool(ch.get("enabled", True)),
+                    "config": merge_secrets(ch.get("config") or {}, cfg_old),
+                })
+            CFG["notify_channels"] = clean
+
+        save_cfg(CFG)
+        log("通知配置已保存：启用=%s，通道 %d 个，事件 %d 项"
+            % (CFG.get("notify_enabled"), len(CFG.get("notify_channels") or []),
+               len(CFG.get("notify_events") or [])))
+        return self._json({"ok": True, "config": cfg_public()})
+
+    def _api_notify_test(self):
+        body = self._body()
+        draft = body.get("channel")
+        if not isinstance(draft, dict) or not draft.get("type"):
+            # 没给草稿 → 测所有已启用的通道
+            res = NOTIFIER.dispatch("【提示】测试消息 · UPS 健康",
+                                    "这是一条测试通知。\n时间：%s" % _fmt_ts(time.time()),
+                                    "TEST", "ok")
+            return self._json({"ok": any(r.get("ok") for r in res), "results": res,
+                               "mode": "all"})
+
+        typ = draft.get("type")
+        if typ not in CHANNEL_META:
+            return self._err(400, "未知通道类型：%s" % typ)
+        old = {c.get("id"): c for c in (CFG.get("notify_channels") or [])}.get(draft.get("id"))
+        cfg_in = merge_secrets(draft.get("config") or {},
+                               (old or {}).get("config") or {})
+        ch = {"type": typ, "name": draft.get("name") or CHANNEL_META[typ], "config": cfg_in}
+        ok, err = NOTIFIER.send_one(
+            ch, "【提示】测试消息 · UPS 健康",
+            "这是一条测试通知，收到说明该通道配置正确。\n时间：%s" % _fmt_ts(time.time()),
+            "TEST", "ok")
+        STORE.add_notify_log({"event": "TEST", "channel": ch["name"], "kind": typ,
+                              "ok": ok, "err": err, "title": "测试消息"})
+        return self._json({"ok": ok, "error": err, "channel": ch["name"], "mode": "one"},
+                          200 if ok else 400)
+
     def _api_settings_save(self):
         body = self._body()
         allowed = {
@@ -1820,7 +2360,7 @@ class Handler(BaseHTTPRequestHandler):
                     COLLECTOR.snap["live"], COLLECTOR.snap.get("raw") or {})
             except Exception:
                 pass
-        return self._json({"ok": True, "config": CFG})
+        return self._json({"ok": True, "config": cfg_public()})
 
     def _api_update_apply(self):
         body = self._body()
@@ -1872,6 +2412,11 @@ def main():
     log("%s v%s 启动，端口 %d" % (APP_CN, VERSION, PORT))
     log("APP_DIR=%s DATA_DIR=%s" % (APP_DIR, DATA_DIR))
     log("upsc=%s" % UPSC)
+    if CFG.get("notify_enabled"):
+        chs = [c for c in (CFG.get("notify_channels") or []) if c.get("enabled", True)]
+        log("通知已启用：%d 个通道，%d 种事件"
+            % (len(chs), len(CFG.get("notify_events") or [])))
+        NOTIFIER._ensure()
 
     t = threading.Thread(target=COLLECTOR.run, daemon=True)
     t.start()
