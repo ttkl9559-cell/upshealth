@@ -32,12 +32,13 @@ import subprocess
 import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 from urllib.error import URLError, HTTPError
+from html import unescape
 
 APP_NAME = "upshealth"
 APP_CN = "UPS 健康"
-FALLBACK_VERSION = "1.0.0"
+FALLBACK_VERSION = "1.0.1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.environ.get("TRIM_APPDEST") or os.path.dirname(HERE)
@@ -1093,6 +1094,111 @@ def _gh_api(path):
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
+# ---------------------------------------------------------------------
+# 版本发现：**不依赖 api.github.com**
+#
+# GitHub 未登录 API 每个出口 IP 只有 60 次/小时，NAS 和电脑共用一个
+# 公网 IP 时很容易被别处打满，届时 /releases/latest 会直接 403，
+# 用户看到的就是「检查更新失败 GitHub API HTTP 403」。
+#
+# 所以主路径换成两个没有配额的入口：
+#   1. releases.atom  纯 XML 订阅源，无配额，还自带 Release 说明
+#   2. /releases/latest 的 302 Location 里带真实 tag，无配额
+# API 只在上面两条都不通时兜底，用来拿精确的 asset 列表。
+# 资源下载地址可以由 tag 推导，不需要 API 参与。
+# ---------------------------------------------------------------------
+
+class _NoRedirect(HTTPRedirectHandler):
+    """不跟随 302，让我们自己读 Location。"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_NOREDIR = build_opener(_NoRedirect)
+
+
+def _with_mirror(url):
+    mirror = (CFG.get("update_mirror") or "").strip()
+    return (mirror.rstrip("/") + "/" + url) if mirror else url
+
+
+def _fetch_text(url, timeout=15, limit=200000):
+    req = Request(_with_mirror(url), headers={
+        "User-Agent": "upshealth/" + VERSION, "Accept": "*/*"})
+    with urlopen(req, timeout=timeout) as r:
+        return r.read(limit).decode("utf-8", "replace")
+
+
+def _gh_latest_from_atom():
+    """releases.atom：无 API 配额，且带 Release 说明。"""
+    txt = _fetch_text("https://github.com/%s/releases.atom" % GITHUB_REPO)
+    m = re.search(r"releases/tag/([^\"'<>\s]+)", txt)
+    if not m:
+        raise RuntimeError("atom 源里没有 tag")
+    tag = unescape(m.group(1)).strip()
+    notes = ""
+    mc = re.search(r"<content[^>]*>(.*?)</content>", txt, re.S)
+    if mc:
+        body = unescape(mc.group(1))
+        body = re.sub(r"<(br|/p|/li|/h\d|/div)\b[^>]*>", "\n", body, flags=re.I)
+        notes = re.sub(r"<[^>]+>", "", body)
+        notes = re.sub(r"[ \t]+\n", "\n", notes)
+        notes = re.sub(r"\n{3,}", "\n\n", notes).strip()
+    md = re.search(r"<updated>([^<]+)</updated>", txt)
+    return tag, notes[:6000], (md.group(1) if md else None)
+
+
+def _gh_latest_from_redirect():
+    """/releases/latest 会 302 到 /releases/tag/<tag>，从 Location 取版本。"""
+    url = "https://github.com/%s/releases/latest" % GITHUB_REPO
+    loc = ""
+    try:
+        with _NOREDIR.open(Request(_with_mirror(url), headers={
+                "User-Agent": "upshealth/" + VERSION}), timeout=15) as r:
+            loc = r.geturl() or ""
+    except HTTPError as e:
+        if e.code not in (301, 302, 303, 307, 308):
+            raise
+        loc = e.headers.get("Location") or ""
+    m = re.search(r"releases/tag/([^/?#\s\"']+)", loc)
+    if not m:
+        raise RuntimeError("跳转目标里没有 tag")
+    return unescape(m.group(1)).strip()
+
+
+def _pick_asset(assets, arch):
+    """从 API 的 asset 列表里挑当前架构的 fpk，并严格配对同名 .sha256。"""
+    fpk = None
+    for a in assets:
+        n = (a.get("name") or "").lower()
+        if n.endswith(".fpk") and arch in n:
+            fpk = a
+            break
+    if not fpk:
+        for a in assets:
+            if (a.get("name") or "").lower().endswith(".fpk"):
+                fpk = a
+                break
+    sha = None
+    if fpk and fpk.get("name"):
+        want = (fpk["name"] + ".sha256").lower()
+        for a in assets:
+            if (a.get("name") or "").lower() == want:
+                sha = a
+                break
+    return fpk, sha
+
+
+_UPDATE_CACHE = {"ts": 0.0, "data": None}
+UPDATE_CACHE_TTL = 90  # 秒。防止连点「检查更新」把配额反复打光
+
+
+def _guess_arch():
+    mach = (platform.machine() or "").lower()
+    return "arm" if mach in ("aarch64", "arm64", "armv8l", "armv7l") else "x86"
+
+
 def ver_tuple(v):
     v = (v or "").strip().lstrip("vV")
     parts = re.split(r"[.\-+]", v)
@@ -1109,70 +1215,122 @@ def ver_tuple(v):
 
 
 def check_update(force=False):
-    try:
-        rel = _gh_api("/repos/%s/releases/latest" % GITHUB_REPO)
-    except HTTPError as e:
-        if e.code == 404:
-            return {"ok": False, "error": "仓库或 Release 不存在（%s）" % GITHUB_REPO}
-        return {"ok": False, "error": "GitHub API HTTP %s" % e.code}
-    except URLError as e:
-        return {"ok": False, "error": "无法访问 GitHub：%s" % getattr(e, "reason", e),
-                "hint": "可在设置里填更新镜像前缀（如 https://ghfast.top/）后重试"}
-    except Exception as e:
-        return {"ok": False, "error": "检查更新失败：%s" % e}
+    """
+    查询最新 Release。三级来源，前两级都不吃 GitHub API 配额：
+      atom → redirect → api
+    拿到 tag 后，安装包与 .sha256 的下载地址可由 tag 直接推导，
+    因此 API 挂掉（限流 403）也不影响更新。
+    """
+    now = time.time()
+    if (not force) and _UPDATE_CACHE["data"] and (now - _UPDATE_CACHE["ts"]) < UPDATE_CACHE_TTL:
+        return _UPDATE_CACHE["data"]
 
-    tag = rel.get("tag_name") or ""
+    arch = _guess_arch()
+    errs = []
+    tag, notes, published, source, assets = "", "", None, "", []
+
+    # 1) releases.atom（无配额，带说明）
+    try:
+        tag, notes, published = _gh_latest_from_atom()
+        source = "atom"
+    except Exception as e:
+        errs.append("atom: %s" % e)
+
+    # 2) 302 跳转取 tag（无配额）
+    if not tag:
+        try:
+            tag = _gh_latest_from_redirect()
+            source = "redirect"
+        except Exception as e:
+            errs.append("redirect: %s" % e)
+
+    # 3) API 兜底（可能被限流）
+    if not tag:
+        try:
+            rel = _gh_api("/repos/%s/releases/latest" % GITHUB_REPO)
+            tag = rel.get("tag_name") or ""
+            notes = (rel.get("body") or "")[:6000]
+            published = rel.get("published_at")
+            source = "api"
+            assets = [{
+                "name": a.get("name"), "size": a.get("size"),
+                "url": a.get("browser_download_url"),
+                "sha256": (a.get("digest") or "").replace("sha256:", "") or None,
+            } for a in (rel.get("assets") or [])]
+        except HTTPError as e:
+            errs.append("api: HTTP %s" % e.code)
+            if e.code == 404:
+                d = {"ok": False, "version": VERSION,
+                     "error": "仓库或 Release 不存在（%s）" % GITHUB_REPO}
+                _UPDATE_CACHE.update({"ts": now, "data": d})
+                return d
+        except Exception as e:
+            errs.append("api: %s" % e)
+
+    if not tag:
+        det = "；".join(errs)
+        if "403" in det or "429" in det:
+            hint = ("GitHub 接口触发了限流（未登录时每个出口 IP 每小时 60 次），"
+                    "一般几十分钟内自行恢复；也可在下面填更新镜像前缀后重试")
+        else:
+            hint = "网络到 GitHub 不通。可在下面「更新镜像前缀」填 https://ghfast.top/ 后重试"
+        d = {"ok": False, "version": VERSION,
+             "error": "无法获取 Release 版本信息",
+             "detail": det,
+             "hint": hint}
+        return d  # 失败不缓存，允许立刻重试
+
     latest = tag.lstrip("vV")
-    assets = []
-    for a in rel.get("assets") or []:
-        assets.append({
-            "name": a.get("name"), "size": a.get("size"),
-            "url": a.get("browser_download_url"),
-            "sha256": (a.get("digest") or "").replace("sha256:", "") or None,
-        })
-    # 选当前架构的包
-    mach = (platform.machine() or "").lower()
-    arch = "arm" if mach in ("aarch64", "arm64", "armv8l", "armv7l") else "x86"
-    fpk = None
-    for a in assets:
-        n = (a["name"] or "").lower()
-        if n.endswith(".fpk") and arch in n:
-            fpk = a
-            break
-    if not fpk:
-        for a in assets:
-            if (a["name"] or "").lower().endswith(".fpk"):
-                fpk = a
-                break
-    # sha256 附件必须与选中的 fpk 严格同名（多架构包里不能串）
-    sha = None
-    if fpk and fpk.get("name"):
-        want = (fpk["name"] + ".sha256").lower()
-        for a in assets:
-            if (a["name"] or "").lower() == want:
-                sha = a
-                break
-    if not sha:
-        for a in assets:
-            if (a["name"] or "").lower().endswith(".sha256"):
-                sha = a
-                break
+    base = "https://github.com/%s/releases/download/%s/" % (GITHUB_REPO, tag)
+    fname = "upshealth_%s_%s.fpk" % (latest, arch)
+
+    if assets:
+        fpk, sha_asset = _pick_asset(assets, arch)
+        if not (sha_asset and fpk and fpk.get("name")):
+            sha_asset = None
+        if fpk and not fpk.get("sha256") and sha_asset:
+            try:
+                txt = _fetch_text(sha_asset["url"], timeout=20)
+                m = re.search(r"\b([0-9a-fA-F]{64})\b", txt)
+                if m:
+                    fpk["sha256"] = m.group(1).lower()
+            except Exception as e:
+                log("取 sha256 失败：%s" % e, "warn")
+    else:
+        # 直连推导：命名规则由 build_fpk.py 固定，tag 已知即可拼出地址
+        fpk = {"name": fname, "size": None, "url": base + fname, "sha256": None}
+        sha_asset = {"name": fname + ".sha256", "size": None,
+                     "url": base + fname + ".sha256"}
+        try:
+            txt = _fetch_text(sha_asset["url"], timeout=20)
+            m = re.search(r"\b([0-9a-fA-F]{64})\b", txt)
+            if m:
+                fpk["sha256"] = m.group(1).lower()
+            else:
+                sha_asset = None
+        except Exception:
+            sha_asset = None  # 拿不到校验文件也允许更新，只是少一道校验
 
     newer = ver_tuple(latest) > ver_tuple(VERSION)
-    return {
+    data = {
         "ok": True,
         "current": VERSION,
         "latest": latest,
         "tag": tag,
         "newer": newer,
-        "published": rel.get("published_at"),
-        "notes": (rel.get("body") or "")[:6000],
-        "page": rel.get("html_url"),
+        "published": published,
+        "notes": notes,
+        "page": "https://github.com/%s/releases/tag/%s" % (GITHUB_REPO, tag),
         "arch": arch,
         "fpk": fpk,
-        "sha_asset": sha,
+        "sha_asset": sha_asset,
         "assets": assets,
+        "source": source,
+        "api_error": ("；".join(errs) or None),
+        "verified": bool(fpk and fpk.get("sha256")),
     }
+    _UPDATE_CACHE.update({"ts": now, "data": data})
+    return data
 
 
 def _download(url, dest, mirror=""):
@@ -1428,7 +1586,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/settings":
                 return self._json({"ok": True, "config": CFG})
             if path == "/api/update/check":
-                return self._json(dict(check_update(), version=VERSION))
+                # 用户手动点「检查更新」带 force=1，绕过 90 秒结果缓存
+                f = (qs.get("force") or ["0"])[0] not in ("0", "", "false")
+                return self._json(dict(check_update(force=f), version=VERSION))
             if path == "/api/export.csv":
                 return self._api_export_csv(qs)
             # 先按真实静态文件解析（图标 / 诊断页等），找不到才回落到 SPA 首页
@@ -1664,7 +1824,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_update_apply(self):
         body = self._body()
-        info = check_update()
+        info = check_update(force=True)
         if not info.get("ok"):
             return self._json(info, 400)
         if not info.get("newer") and not body.get("force"):

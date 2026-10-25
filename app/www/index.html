@@ -218,6 +218,11 @@ a{color:inherit;text-decoration:none}
 .vv{font:600 13.5px/1.3 var(--font-mono);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .vv .u{font-size:11px;color:var(--ink-3);font-weight:500;margin-left:3px}
 .vv.miss{color:var(--ink-3);font-weight:500}
+/* 长文本（型号 / 驱动串 / 仓库地址）不截断，允许换行 */
+.vrow .vv.w{white-space:normal;overflow-wrap:anywhere;word-break:break-all;line-height:1.5}
+@media(max-width:720px){
+  #aboutZone .vv{white-space:normal;overflow-wrap:anywhere;word-break:break-all;line-height:1.5}
+}
 
 /* ---------- 设置抽屉 ---------- */
 .sheet{position:fixed;z-index:61;top:10px;right:10px;bottom:10px;width:min(600px,calc(100vw - 20px));
@@ -1287,6 +1292,7 @@ function renderUpdate() {
   if (!u.ok) {
     z.innerHTML = '<div class="banner warn"><svg><use href="#i-alert"/></svg><div>' +
       '<div class="bt">检查失败</div><div class="bd">' + esc(u.error || "未知错误") +
+      (u.detail ? "<br><span class='mono-sm'>" + esc(u.detail) + "</span>" : "") +
       (u.hint ? "<br>" + esc(u.hint) : "") + "</div></div></div>";
     $("#btnDoUpd").disabled = true;
     return;
@@ -1302,6 +1308,7 @@ function renderUpdate() {
   z.innerHTML = '<div class="banner warn"><svg><use href="#i-down"/></svg><div>' +
     '<div class="bt">发现新版本 ' + esc(u.latest) + "</div>" +
     '<div class="bd">当前 ' + esc(u.current) + " · " + (u.fpk ? esc(u.fpk.name) + " " + bytes(u.fpk.size) : "无安装包") +
+    (u.ok && u.verified === false ? "<br>该 Release 未提供 sha256 校验文件，将仅依赖 HTTPS 传输" : "") +
     (notes ? "<br><span class='mono-sm'>" + esc(notes) + "</span>" : "") + "</div></div></div>";
   $("#btnDoUpd").disabled = !u.fpk;
 }
@@ -1309,7 +1316,7 @@ function renderUpdate() {
 $("#btnCheckUpd").onclick = async e => {
   const b = e.currentTarget;
   b.disabled = true; b.textContent = "检查中…";
-  const j = await api("/api/update/check");
+  const j = await api("/api/update/check?force=1");
   S.upd = j;
   renderUpdate();
   b.disabled = false; b.textContent = "检查更新";
@@ -1381,10 +1388,12 @@ function renderAbout() {
     ["运行时长", meta.uptime ? Math.floor(meta.uptime / 60) + " 分钟" : "—"],
     ["仓库", "github.com/ttkl9559-cell/upshealth"],
   ];
-  $("#aboutZone").innerHTML = rows.map(([k, v]) =>
-    '<div class="vrow"><div class="vk"><div class="cn">' + esc(k) + '</div></div>' +
-    '<div class="vv" style="font-size:12.5px;max-width:60%;overflow:hidden;text-overflow:ellipsis">' +
-    esc(v) + "</div></div>").join("");
+  $("#aboutZone").innerHTML = rows.map(([k, v]) => {
+    // 长值不截断：加 .w 让它换行，短值保持右对齐单行
+    const wrap = String(v).length > 20 ? " w" : "";
+    return '<div class="vrow"><div class="vk"><div class="cn">' + esc(k) + '</div></div>' +
+      '<div class="vv' + wrap + '" style="font-size:12.5px">' + esc(v) + "</div></div>";
+  }).join("");
 }
 
 /* ---------------- 轮询 ---------------- */
@@ -1448,6 +1457,8 @@ window.addEventListener("resize", () => {
   if (PAGES.includes(h)) go(h, true);
   await refreshOnce();
   schedule();
+  // 便于截图/排障：?sheet=1 直接打开设置抽屉
+  if (new URLSearchParams(location.search).get("sheet")) openSheet(true);
   // 启动时静默检查一次更新
   try {
     const cfg = await api("/api/settings");
