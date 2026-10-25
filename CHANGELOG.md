@@ -1,12 +1,5 @@
 # 更新日志
 
-## v1.0.1 — 2026-10-25
-
-### 修复
-
-- 内置更新在挑选 `sha256` 校验附件时，多架构 Release 下可能取到另一架构的 `.sha256`（例如 x86 机器取到 arm 的校验文件），导致误报「SHA256 校验失败」。现在严格按选中的 fpk 同名匹配。
-- 该问题此前被 GitHub Release 自带的 asset `digest` 字段兜住，属于潜在隐患，本次一并修掉。
-
 ## v1.0.0 — 2026-10-25
 
 首个版本。
@@ -26,6 +19,8 @@
 - 后端零第三方依赖，仅 Python 3 标准库（`http.server` / `sqlite3` / `tarfile` / `hashlib` / `subprocess`）
 - 前端单文件，原生 JS + 内联 SVG，无构建步骤、无 CDN 依赖
 - 写操作双重 CSRF 门（`Content-Type: application/json` + `X-UPS-Request: 1`）
+- 静态目录自动识别 `<app>/www` 与 `<app>/server/www` 两种布局，调试态与 fpk 安装态共用一套代码
+- 更新时 `sha256` 附件与选中的 fpk 严格同名匹配，多架构 Release 下不会串包
 - 打包脚本纯 Python 实现，Windows 下也能产出飞牛可接受的 fpk（不依赖 `tar` / `md5sum`）
 - UI 遵循 fnmonitor 设计 token（画布 `#ECECEA`/`#000000`、磁贴 `#FFFFFF`/`#161616`、圆角 26/14、状态色 ok/warn/crit）
 

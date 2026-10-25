@@ -37,13 +37,33 @@ from urllib.error import URLError, HTTPError
 
 APP_NAME = "upshealth"
 APP_CN = "UPS 健康"
-FALLBACK_VERSION = "1.0.1"
+FALLBACK_VERSION = "1.0.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.environ.get("TRIM_APPDEST") or os.path.dirname(HERE)
 DATA_DIR = os.environ.get("TRIM_PKGVAR") or os.path.join(APP_DIR, "data")
 PORT = int(os.environ.get("TRIM_SERVICE_PORT") or 8778)
-WWW_DIR = os.path.join(HERE, "www")
+
+
+def _pick_www():
+    """
+    定位静态目录。两种布局都要兼容：
+      <app>/www/index.html          ← fpk 安装后的真实布局（app.tgz 里 server/ 与 www/ 同级）
+      <app>/server/www/index.html   ← 扁平调试布局
+    """
+    cands = [
+        os.path.join(APP_DIR, "www"),
+        os.path.join(HERE, "www"),
+        os.path.join(HERE, "..", "www"),
+    ]
+    for c in cands:
+        c = os.path.normpath(c)
+        if os.path.isfile(os.path.join(c, "index.html")):
+            return c
+    return os.path.normpath(cands[0])
+
+
+WWW_DIR = _pick_www()
 DB_PATH = os.path.join(DATA_DIR, "upshealth.db")
 CFG_PATH = os.path.join(DATA_DIR, "config.json")
 LOG_PATH = os.path.join(DATA_DIR, "upshealth.log")
@@ -1227,14 +1247,14 @@ def apply_update(url, expect_sha=None):
     except SyntaxError as e:
         return {"ok": False, "error": "新版本代码语法错误，已拒绝更新：%s" % e}
 
-    # 备份
+    # 备份（路径按真实布局解析，不能用 server/server.py 这种相对 HERE 的拼法）
     backup = os.path.join(DATA_DIR, "backup")
     os.makedirs(backup, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    for rel in ("server/server.py", "www/index.html"):
-        src_p = os.path.join(HERE, rel)
+    for src_p, tag_name in ((os.path.join(HERE, "server.py"), "server.py"),
+                            (os.path.join(WWW_DIR, "index.html"), "index.html")):
         if os.path.isfile(src_p):
-            dst = os.path.join(backup, ("%s.%s" % (rel.replace("/", "_"), stamp)))
+            dst = os.path.join(backup, "%s.%s" % (tag_name, stamp))
             try:
                 shutil.copy2(src_p, dst)
             except Exception:
