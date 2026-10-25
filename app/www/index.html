@@ -341,11 +341,11 @@ a{color:inherit;text-decoration:none}
 .gitem .gf{margin-top:4px;opacity:.85}
 .gitem .gf::before{content:"→ ";font-weight:600}
 .gnum{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:11px}
-.gnum .gfld{background:var(--fill-1);border-radius:var(--r-sm);padding:9px 11px}
-.gnum .gfld .gn{font:500 10.5px/1.3 var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
-.gnum .gfld .grow{display:flex;align-items:baseline;gap:5px;margin-top:4px}
-.gnum .gfld input{flex:1;min-width:0;border:none;background:transparent;font:600 15px/1.2 var(--font-display);color:var(--ink-1);font-variant-numeric:tabular-nums;padding:0}
-.gnum .gfld .gu{font:500 11px/1 var(--font-mono);color:var(--ink-3)}
+.gfld{background:var(--fill-1);border-radius:var(--r-sm);padding:9px 11px;min-width:0}
+.gfld .gn{font:500 11px/1.3 var(--font-sans);color:var(--ink-3)}
+.gfld .grow{display:flex;align-items:baseline;gap:5px;margin-top:4px}
+.gfld input{flex:0 0 auto;width:2.7em;min-width:0;border:none;background:transparent;font:600 15px/1.2 var(--font-display);color:var(--ink-1);font-variant-numeric:tabular-nums;padding:0}
+.gfld .gu{font:500 11px/1 var(--font-mono);color:var(--ink-3);flex:0 0 auto}
 .gstate{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin-top:11px;font-size:12.5px;color:var(--ink-2)}
 .gstate .gk{color:var(--ink-3);font-size:11.5px}
 .gstate b{font-variant-numeric:tabular-nums}
@@ -355,6 +355,69 @@ a{color:inherit;text-decoration:none}
   border:1px solid transparent;transition:.18s var(--ease)}
 .chip2.on{background:var(--ink-1);color:var(--bg);border-color:var(--ink-1)}
 .chip2.danger.on{background:var(--crit);border-color:var(--crit);color:#fff}
+
+.seg3{display:inline-flex;background:var(--fill-1);border-radius:var(--r-pill);padding:3px;gap:2px;flex:0 0 auto}
+.seg3 button{border:none;background:transparent;color:var(--ink-2);font:500 12px/1 var(--font-sans);
+  padding:0 12px;height:26px;border-radius:var(--r-pill);cursor:pointer;white-space:nowrap;
+  transition:background var(--dur-1) var(--ease),color var(--dur-1) var(--ease)}
+.seg3 button.on{background:var(--card);color:var(--ink-1)}
+.seg3 button.on.danger{background:var(--crit);color:#fff}
+.seg3 button:disabled{opacity:.4;cursor:not-allowed}
+
+.gsay{font-size:12.5px;color:var(--ink-2);line-height:1.65;padding:12px 0 3px}
+.gsay b{font-weight:600;color:var(--ink-1)}
+
+.gline{display:grid;grid-template-columns:58px minmax(0,1fr) 72px;gap:11px;align-items:center;padding:8px 0 0}
+.glabel{font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+.gval{display:flex;align-items:baseline;justify-content:flex-end;gap:3px}
+.gval b{font:600 16px/1 var(--font-display);font-variant-numeric:tabular-nums;color:var(--ink-1)}
+.gval i{font:500 11px/1 var(--font-mono);color:var(--ink-3);font-style:normal}
+.ghint{font-size:11.5px;color:var(--ink-3);line-height:1.5;padding-left:69px;margin-top:3px}
+
+.gslide input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:18px;
+  background:transparent;cursor:pointer;display:block}
+.gslide input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
+  background:linear-gradient(90deg,var(--ink-2) 0 var(--p,20%),var(--fill-2) var(--p,20%) 100%)}
+.gslide input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;
+  margin-top:-5px;border-radius:50%;background:var(--card);border:2px solid var(--ink-1);box-sizing:border-box}
+.gslide input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:var(--fill-2)}
+.gslide input[type=range]::-moz-range-progress{height:4px;border-radius:2px;background:var(--ink-2)}
+.gslide input[type=range]::-moz-range-thumb{width:10px;height:10px;border-radius:50%;
+  background:var(--card);border:2px solid var(--ink-1);box-sizing:border-box}
+
+.gadv{margin-top:11px;border-top:.5px solid var(--line)}
+.gadvh{display:flex;align-items:center;gap:8px;padding:11px 0;cursor:pointer;user-select:none}
+.gadvh .gt2{font-size:12.5px;font-weight:500;color:var(--ink-1);flex:0 0 auto}
+.gadvh .gs{font-size:11.5px;color:var(--ink-3);flex:1;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.gadvh .car{width:7px;height:7px;flex:0 0 auto;margin:0 3px 3px 0;border-right:1.5px solid var(--ink-3);
+  border-bottom:1.5px solid var(--ink-3);transform:rotate(45deg);
+  transition:transform var(--dur-2) var(--ease)}
+.gadvh .car.open{transform:rotate(225deg);margin-bottom:0;margin-top:3px}
+.gadvb{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;padding-bottom:5px}
+
+.gconf{border-top:.5px solid var(--line);padding-top:11px}
+.gch{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.gch .dot{width:16px;height:16px;border-radius:50%;flex:0 0 auto;display:flex;
+  align-items:center;justify-content:center;color:#fff}
+.gconf.ok .dot{background:var(--ok)}
+.gconf.warn .dot{background:var(--warn-fill)}
+.gconf.crit .dot{background:var(--crit)}
+.gch .t{font-size:12.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gconf.ok .gch .t{color:var(--ink-2)}
+.gconf.warn .gch .t,.gconf.crit .gch .t{color:var(--ink-1);font-weight:500}
+.gch .more{font-size:11.5px;color:var(--ink-3);flex:0 0 auto;white-space:nowrap}
+.gdet{font-size:11.5px;color:var(--ink-2);line-height:1.65;margin-top:9px;
+  background:var(--fill-1);border-radius:var(--r-sm);padding:10px 12px}
+.gdet code{font:11px/1.4 var(--font-mono);background:var(--fill-2);padding:1px 4px;border-radius:3px}
+.gdet .gi{margin-top:8px}
+.gdet .gi:first-child{margin-top:0}
+.gdet .gt3{font-weight:600;color:var(--ink-1)}
+.gdet .gf2{color:var(--ink-3);margin-top:2px}
+
+.gnow{display:flex;align-items:center;gap:7px;margin-top:11px;font-size:12px;
+  color:var(--ink-3);line-height:1.55;flex-wrap:wrap}
+.gnow b{font-weight:500;color:var(--ink-2);font-variant-numeric:tabular-nums}
 
 .toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,20px);opacity:0;pointer-events:none;
   background:var(--ink-1);color:var(--bg);padding:12px 20px;border-radius:var(--r-pill);
@@ -722,9 +785,12 @@ a{color:inherit;text-decoration:none}
     <div class="sheet-sec" id="secGuard">关机保护</div>
     <div class="card tight">
       <div class="field">
-        <div class="field-l"><div class="nm">低电自动关机</div>
-          <div class="hint">断电后电量降到阈值，先推送、留宽限期，再安全关机。默认关闭</div></div>
-        <div class="sw" id="setGuard"></div>
+        <div class="field-l"><div class="nm">断电自动关机</div></div>
+        <div class="seg3" id="guardMode">
+          <button data-gmode="off">关闭</button>
+          <button data-gmode="notify">只告警</button>
+          <button data-gmode="shutdown">自动关机</button>
+        </div>
       </div>
       <div id="guardZone"></div>
     </div>
@@ -932,7 +998,11 @@ function renderStatus(j) {
     const prevSig = S.guardSig;
     takeGuard(j.guard);
     renderGuardBar();
-    if ($("#sheet").classList.contains("on") && S.guardSig !== prevSig) renderGuardPanel();
+    if ($("#sheet").classList.contains("on") && S.guardSig !== prevSig) {
+      // 正在拖滑块 / 输入时重建 DOM 会把拖动打断，等松手后再说
+      const gz = $("#guardZone");
+      if (!gz || !gz.contains(document.activeElement)) renderGuardPanel();
+    }
   }
   const live = j.live || {}, dev = j.device || {}, h = j.health || {};
   const pill = $("#livePill"), txt = $("#liveText");
@@ -1937,19 +2007,21 @@ function renderGuardBar() {
 
   if (st === "armed") {
     kind = "crit";
+    const why = esc(g.note || "已满足关机条件");
     if (g.mode === "shutdown") {
       title = "关机保护已启动";
-      body = "电量低于 " + fmt(g.low_pct, 0) + "%，<b id=\"gLeft\">" +
-        durShort(guardLeft(g)) + "</b> 后执行关机。市电恢复或点右侧按钮都会中止。";
+      body = why + "，<b id=\"gLeft\">" + durShort(guardLeft(g)) +
+        "</b>后执行关机。市电恢复或点右侧按钮都会中止。";
     } else {
-      title = "低电告警已触发（未关机）";
-      body = "电量低于 " + fmt(g.low_pct, 0) + "%，当前是「只告警」模式，不会关机。";
+      title = "已触发（只告警，未关机）";
+      body = why + "。当前是「只告警」模式，不会关机。";
     }
     act = { k: "cancel", label: "取消关机" };
   } else if (st === "alerted") {
     kind = "crit";
-    title = "电量已低于告警线";
-    body = "已推送告警但未关机（只告警模式）。电池耗尽时 NAS 会直接断电，请尽快恢复市电。";
+    title = "已触发告警";
+    body = esc(g.note || "已满足关机条件") +
+      "。当前是「只告警」模式。电池耗尽时 NAS 会直接断电，请尽快恢复市电。";
   } else if (st === "blocked") {
     kind = "warn";
     title = "自动关机被拦下了";
@@ -1970,87 +2042,178 @@ function renderGuardBar() {
     "</div>";
 }
 
-/* 设置抽屉：开关、阈值、冲突检测 */
+/* 设置抽屉：两条判据各一条滑块，工程参数折叠，冲突正常时只占一行 */
 function renderGuardPanel() {
   const z = $("#guardZone"), g = S.guard;
   if (!z || !g) return;
   const c = g.conflicts || {};
-  const items = c.items || [];
   const risk = c.risk || "none";
   const blocked = !!c.block_shutdown && !g.allow_conflict;
 
-  $("#setGuard").classList.toggle("on", !!g.enabled);
-
-  let h = "";
-  // ---- 冲突检测 ----
-  const rk = risk === "high" ? "crit" : risk === "medium" ? "warn" : "ok";
-  const ri = risk === "none" ? "i-check" : "i-alert";
-  h += '<div class="gcard ' + rk + '"><div class="gt"><svg><use href="#' + ri + '"/></svg>' +
-    "飞牛 / NUT 冲突检测 · " + (risk === "none" ? "无冲突" : risk === "high" ? "高危" : "注意") +
-    "</div><div class=\"gv\">" + esc(c.verdict_cn || "") + "</div>";
-  items.forEach(it => {
-    const col = it.level === "high" ? "var(--crit)"
-      : (it.level === "medium" || it.level === "warn") ? "var(--warn)" : "var(--ink-3)";
-    h += '<div class="gitem"><div class="gh" style="color:' + col + '">' +
-      esc(it.title) + '</div><div class="gd">' + esc(it.detail) + "</div>" +
-      (it.fix ? '<div class="gf">' + esc(it.fix) + "</div>" : "") + "</div>";
+  // 模式三合一：关闭 / 只告警 / 自动关机
+  document.querySelectorAll("#guardMode button").forEach(b => {
+    const m = b.dataset.gmode;
+    b.classList.toggle("on", m === "off" ? !g.enabled : (g.enabled && g.mode === m));
+    b.classList.toggle("danger", m === "shutdown");
+    const dis = (m === "shutdown" && blocked);
+    b.disabled = dis;
+    b.title = dis ? "先关掉飞牛那边的 UPS 保护" : "";
   });
-  const fn = c.fnos || {}, nu = c.nut || {};
-  if (fn.available) {
-    h += '<div class="gitem"><div class="gd">' +
-      "飞牛侧读到的值：<code>enable = " + (fn.enable ? "true" : "false") +
-      "</code>、<code>shutdown-ups.enabled = " + (fn.shutdown_ups ? "true" : "false") +
-      "</code><br>" + esc(fn.path) + "<br>" +
-      "upsmon：进程 " + ((nu.pids || []).length) + " 个、MONITOR " +
-      ((nu.monitors || []).length) + " 条、upssched " +
-      (nu.upssched_ready ? "已配置" : "未配置") +
-      "</div></div>";
+
+  let h = '<div class="gsay">' + sayGuard(g) + "</div>";
+  h += gslide("gdTime", "断电后", g.time_min, 1, 60, "分钟",
+              "市电断开超过这么久还没恢复") +
+       gslide("gdLow", "电量低于", g.low_pct, 5, 95, "%",
+              "UPS 剩余电量降到这个值");
+
+  const ao = !!S.guardAdv;
+  h += '<div class="gadv"><div class="gadvh" id="gAdvBtn">' +
+    '<span class="gt2">高级</span><span class="gs">触发后再等 ' +
+    esc(durShort(g.grace_s)) + " · 确认期 " + esc(durShort(g.min_ob_s)) + "</span>" +
+    '<i class="car' + (ao ? " open" : "") + '"></i></div>';
+  if (ao) {
+    h += '<div class="gadvb">' +
+      gnum("gdGrace", "触发后再等", g.grace_s, "秒", "留出取消的余地，期间来电会自动中止") +
+      gnum("gdMinOb", "确认期", g.min_ob_s, "秒", "必须在电池上撑满这么久才认，防切换误判") +
+      "</div>";
   }
   h += "</div>";
 
-  // ---- 模式 ----
-  h += '<div class="chipset" style="margin-top:12px">' +
-    '<button class="chip2' + (g.mode === "notify" ? " on" : "") + '" data-gmode="notify">只告警</button>' +
-    '<button class="chip2 danger' + (g.mode === "shutdown" ? " on" : "") +
-    (blocked ? " disabled" : "") + '" data-gmode="shutdown"' +
-    (blocked ? ' title="先关掉飞牛侧的 UPS 保护"' : "") + ">自动关机</button></div>";
+  h += confLine(c, risk, c.items || []);
+  h += '<div class="gnow">' + nowLine(g) + "</div>";
 
-  // ---- 阈值 ----
-  h += '<div class="gnum">' +
-    gnum("gdLow", "触发线", g.low_pct, "%", "电量降到该值开始倒计时") +
-    gnum("gdCrit", "紧急线", g.crit_pct, "%", "降到该值把宽限压到 30 秒") +
-    gnum("gdGrace", "宽限期", g.grace_s, "秒", "给来电和你反应的时间") +
-    gnum("gdMinOb", "确认期", g.min_ob_s, "秒", "必须在电池上撑满才认") +
-    "</div>";
-
-  // ---- 当前状态 ----
-  let s = '<div class="gstate"><span class="gk">当前状态</span><b>' +
-    esc(g.state_cn || g.state) + "</b>";
-  if (g.on_batt_s) s += '<span class="gk">电池供电</span><b>' + durShort(g.on_batt_s) + "</b>";
-  if (g.cancel_left_s) s += '<span class="gk">取消静默</span><b>' + durShort(g.cancel_left_s) + "</b>";
-  if (g.boot_hold_left) s += '<span class="gk">启动静默</span><b>' + durShort(g.boot_hold_left) + "</b>";
-  s += "</div>";
-  if (g.note) s += '<div class="hint" style="margin-top:6px">' + esc(g.note) + "</div>";
+  if (g.state === "armed" || g.state === "alerted") {
+    h += '<div class="gacts"><button class="btn sm" id="btnCancelGuard">立即取消关机</button></div>';
+  }
   if (g.last_fire && g.last_fire.fired_at) {
     const d = new Date(g.last_fire.fired_at * 1000);
-    s += '<div class="hint" style="margin-top:6px">上次执行关机：' +
-      d.toLocaleString("zh-CN", { hour12: false }) + "，当时电量 " +
-      fmt(g.last_fire.charge, 0) + "%、电池供电 " + durShort(g.last_fire.on_batt_s) + "</div>";
+    h += '<div class="gnow">上次执行关机 ' +
+      esc(d.toLocaleString("zh-CN", { hour12: false })) + " · 当时电量 " +
+      fmt(g.last_fire.charge, 0) + "%</div>";
   }
-  h += s;
-
-  h += '<div class="gacts">' +
-    '<button class="btn pri sm" id="btnSaveGuard">保存</button>' +
-    (g.state === "armed" || g.state === "alerted"
-      ? '<button class="btn sm" id="btnCancelGuard">立即取消关机</button>' : "") +
-    '<button class="btn sm" id="btnSimGuard">演练一次</button>' +
-    '<button class="btn sm" id="btnRecheck">重新检测冲突</button>' +
-    "</div>";
-  h += '<div class="hint" style="margin-top:9px">关机走 <code class="mono-sm">' +
-    esc(g.cmd || "shutdown -h now") +
-    "</code> 关掉 NAS 本身，不会切断 UPS 输出——那样来电后无法自动开机。</div>";
 
   z.innerHTML = h;
+
+  const t = $("#gdTime"), l = $("#gdLow");
+  if (t) bindSlide(t, 1, 60, "guard_time_min");
+  if (l) bindSlide(l, 5, 95, "guard_low_pct");
+  const ab = $("#gAdvBtn");
+  if (ab) ab.onclick = () => { S.guardAdv = !S.guardAdv; renderGuardPanel(); };
+  const ch = $("#gConfHead");
+  if (ch) ch.onclick = () => { S.guardConf = !S.guardConf; renderGuardPanel(); };
+  const cb = $("#btnCancelGuard");
+  if (cb) cb.onclick = cancelGuardNow;
+  const sf = $("#gdGrace"), mo = $("#gdMinOb");
+  if (sf) sf.onchange = () => saveGuard({ guard_grace_s: Math.round(num(sf.value) || 60) }, true);
+  if (mo) mo.onchange = () => saveGuard({ guard_min_ob_s: Math.round(num(mo.value) || 30) }, true);
+}
+
+/* 一句话说清「它现在会不会替我关机」 */
+function sayGuard(g) {
+  if (!g.enabled) return "已关闭，断电后不会自动关机。电池耗尽时 NAS 会直接断电。";
+  if (g.mode === "notify") return "满足任一条就<b>推送告警</b>，不会关机。";
+  return "满足任一条就<b>自动关机</b>，触发后先等 " +
+    esc(durShort(g.grace_s)) + "，可随时取消。";
+}
+
+function gslide(id, label, val, min, max, unit, hint) {
+  const v = num(val), pct = ((v - min) / (max - min)) * 100;
+  return '<div class="gline"><div class="glabel">' + esc(label) + "</div>" +
+    '<div class="gslide"><input type="range" id="' + id + '" min="' + min +
+    '" max="' + max + '" step="1" value="' + (v === null ? min : v) +
+    '" style="--p:' + pct.toFixed(1) + '%"></div>' +
+    '<div class="gval"><b id="' + id + 'v">' +
+    (v === null ? "—" : Math.round(v)) + "</b><i>" + esc(unit) + "</i></div></div>" +
+    '<div class="ghint">' + esc(hint) + "</div>";
+}
+
+/* 滑块：拖动时只更新显示，松手才保存，避免拖着走一路打接口 */
+function bindSlide(el, min, max, key) {
+  const out = $("#" + el.id + "v");
+  const paint = () => {
+    const v = num(el.value) || min;
+    el.style.setProperty("--p", (((v - min) / (max - min)) * 100).toFixed(1) + "%");
+    if (out) out.textContent = Math.round(v);
+  };
+  paint();
+  el.oninput = paint;
+  el.onchange = () => {
+    paint();
+    const p = {};
+    p[key] = Math.round(num(el.value) || min);
+    saveGuard(p, true);
+  };
+}
+
+/* 冲突检测：正常时一行绿勾，出问题自动变红展开 */
+function confLine(c, risk, items) {
+  const rk = risk === "high" ? "crit" : risk === "medium" ? "warn" : "ok";
+  const txt = risk === "high" ? "飞牛也在管这台 UPS，需要先处理"
+    : risk === "medium" ? "有需要留意的地方"
+    : "与飞牛 UPS 设置无冲突";
+  const open = risk !== "none" || !!S.guardConf;
+  let h = '<div class="gconf ' + rk + '"><div class="gch" id="gConfHead">' +
+    '<span class="dot"><svg style="width:10px;height:10px"><use href="#' +
+    (risk === "none" ? "i-check" : "i-alert") + '"/></svg></span>' +
+    '<span class="t">' + esc(txt) + "</span>" +
+    '<span class="more">' + (open ? "收起" : "详情 ›") + "</span></div>";
+  if (!open) return h + "</div>";
+
+  h += '<div class="gdet">';
+  (items || []).forEach(it => {
+    h += '<div class="gi"><div class="gt3">' + esc(it.title) + "</div>" +
+      "<div>" + esc(it.detail) + "</div>" +
+      (it.fix ? '<div class="gf2">→ ' + esc(it.fix) + "</div>" : "") + "</div>";
+  });
+  const fn = c.fnos || {}, nu = c.nut || {};
+  if (fn.available) {
+    h += '<div class="gi"><div class="gt3">飞牛侧读到的值</div><div>' +
+      "<code>enable = " + (fn.enable ? "true" : "false") + "</code> · " +
+      "<code>shutdown-ups.enabled = " + (fn.shutdown_ups ? "true" : "false") +
+      "</code></div>" + '<div class="gf2">' + esc(fn.path || "") + "</div>" +
+      '<div class="gf2">upsmon ' + ((nu.pids || []).length) + " 个进程 · MONITOR " +
+      ((nu.monitors || []).length) + " 条 · upssched " +
+      (nu.upssched_ready ? "已配置" : "未配置") + "</div></div>";
+  }
+  h += '<div class="gi"><button class="btn sm" id="btnRecheck">重新检测</button> ' +
+    '<button class="btn sm" id="btnSimGuard">演练一次</button></div></div></div>';
+  return h;
+}
+
+/* 状态一句话：不用「待命」「启动静默」这类内部词 */
+function nowLine(g) {
+  const st = g.state || "idle";
+  const led = c => '<span style="color:' + c + '">●</span> ';
+  if (!g.enabled) return led("var(--ink-3)") + "未启用";
+  if (st === "armed") return led("var(--crit)") + "已触发：" + esc(g.note || "") +
+    '，<b id="gNowLeft">' + durShort(guardLeft(g)) + "</b>后执行";
+  if (st === "alerted") return led("var(--crit)") + "已推送告警，未关机";
+  if (st === "blocked") return led("var(--warn-fill)") + "被冲突拦下，未执行";
+  if (st === "fired") return led("var(--crit)") + "已执行关机";
+  if (st === "held") return led("var(--ink-3)") + "刚启动，" +
+    esc(durShort(g.boot_hold_left)) + " 后开始保护";
+  if (st === "watching" && g.on_batt_s) {
+    let s = led("var(--warn-fill)") + '电池供电中 · 已 <b id="gNowOn">' +
+      esc(durShort(g.on_batt_s)) + "</b>";
+    if (g.time_left_s !== null && g.time_left_s !== undefined) {
+      s += ' · 距断电上限还有 <b id="gNowTime">' +
+        esc(durShort(g.time_left_s)) + "</b>";
+    }
+    return s;
+  }
+  const live = (S.status || {}).live || {};
+  const chg = live.chg;
+  return led("var(--ok)") + "正在监测" +
+    (chg !== null && chg !== undefined ? " · 当前电量 " + fmt(chg, 0) + "%" : "");
+}
+
+async function cancelGuardNow() {
+  const j = await post("/api/guard/cancel", {});
+  if (j && j.ok) {
+    takeGuard(j); renderGuardPanel(); renderGuardBar(); toast("已取消关机");
+  } else {
+    toast((j && j.message) || "取消失败");
+  }
 }
 
 function gnum(id, label, val, unit, hint) {
@@ -2058,15 +2221,6 @@ function gnum(id, label, val, unit, hint) {
     '</div><div class="grow"><input id="' + id + '" type="number" value="' +
     (val === null || val === undefined ? "" : val) + '"><span class="gu">' +
     esc(unit) + "</span></div></div>";
-}
-
-function guardPatch() {
-  return {
-    guard_low_pct: num($("#gdLow").value),
-    guard_crit_pct: num($("#gdCrit").value),
-    guard_grace_s: num($("#gdGrace").value),
-    guard_min_ob_s: num($("#gdMinOb").value),
-  };
 }
 
 async function saveGuard(patch, quiet) {
@@ -2083,48 +2237,35 @@ async function saveGuard(patch, quiet) {
   return j;
 }
 
-$("#setGuard").onclick = e => {
-  const on = !e.currentTarget.classList.contains("on");
-  e.currentTarget.classList.toggle("on", on);
-  saveGuard({ guard_enabled: on }, true);
-};
-
 (function guardBind() {
+  const md = $("#guardMode");
+  if (md) {
+    md.addEventListener("click", async e => {
+      const b = e.target.closest("[data-gmode]");
+      if (!b) return;
+      if (b.disabled) { toast("飞牛侧的 UPS 保护还开着，先关掉再启用自动关机"); return; }
+      const m = b.dataset.gmode;
+      if (m === "off") await saveGuard({ guard_enabled: false }, true);
+      else await saveGuard({ guard_enabled: true, guard_mode: m }, true);
+    });
+  }
   const z = $("#guardZone");
   if (!z) return;
   z.addEventListener("click", async e => {
-    const md = e.target.closest("[data-gmode]");
-    if (md) {
-      if (md.classList.contains("disabled")) {
-        toast("飞牛侧的 UPS 保护还开着，先关掉再启用自动关机");
-        return;
-      }
-      const g = S.guard;
-      await saveGuard(Object.assign({ guard_mode: md.dataset.gmode }, guardPatch()), true);
-      if (S.guard) renderGuardPanel();
-      return;
-    }
-    if (e.target.closest("#btnSaveGuard")) {
-      await saveGuard(guardPatch());
-      return;
-    }
-    if (e.target.closest("#btnCancelGuard")) {
-      const j = await post("/api/guard/cancel", {});
-      if (j && j.ok) { takeGuard(j); renderGuardPanel(); renderGuardBar(); toast("已取消"); }
-      else toast((j && j.message) || "取消失败");
-      return;
-    }
     if (e.target.closest("#btnRecheck")) {
       const j = await api("/api/guard/check");
       if (j && j.ok) { takeGuard(j); renderGuardPanel(); renderGuardBar(); toast("已重新检测"); }
       return;
     }
     if (e.target.closest("#btnSimGuard")) {
-      const j = await post("/api/guard/sim", { start_charge: 60, drop: 6, steps: 20, step_s: 60 });
+      const j = await post("/api/guard/sim", {});
       if (!j || !j.ok) { toast("演练失败"); return; }
       const rows = j.rows || [];
       const fire = rows.filter(r => r.state === "fire")[0];
-      toast(fire ? "演练：约 " + durShort(fire.t) + " 后会关机" : "演练：本次参数下不会触发关机");
+      const arm = rows.filter(r => r.state === "armed")[0];
+      if (fire) toast("演练：约 " + durShort(fire.t) + " 后执行关机");
+      else if (arm) toast("演练：约 " + durShort(arm.t) + " 后触发，但没到执行点");
+      else toast("演练：当前参数下不会触发");
       return;
     }
   });
@@ -2145,9 +2286,22 @@ $("#guardBar").addEventListener("click", async e => {
 
 // 倒计时每秒走一格，别等 5 秒一次的轮询
 setInterval(() => {
-  const el = $("#gLeft");
-  if (!el || !S.guard) return;
-  el.textContent = durShort(guardLeft(S.guard));
+  const g = S.guard;
+  if (!g) return;
+  const drift = S.guardAt ? (Date.now() - S.guardAt) / 1000 : 0;
+  const a = $("#gLeft"), b = $("#gNowLeft");
+  if (a || b) {
+    const t = durShort(guardLeft(g));
+    if (a) a.textContent = t;
+    if (b) b.textContent = t;
+  }
+  const on = $("#gNowOn");
+  if (on && g.on_batt_s) {
+    const s = (g.on_batt_s || 0) + drift;
+    on.textContent = durShort(s);
+    const tl = $("#gNowTime");
+    if (tl) tl.textContent = durShort(Math.max(0, (g.time_min || 10) * 60 - s));
+  }
 }, 1000);
 
 async function waitForRestart() {
@@ -2272,6 +2426,9 @@ window.addEventListener("resize", () => {
   // 便于截图/排障：?sheet=1 直接打开设置抽屉
   // 便于截图/排障：?sheet=1 直接打开设置抽屉；&focus=guardZone 滚到指定区块
   if (new URLSearchParams(location.search).get("sheet")) {
+    // 排障深链：?sheet=1&focus=<id>&adv=1&conf=1
+    if (new URLSearchParams(location.search).get("adv")) S.guardAdv = true;
+    if (new URLSearchParams(location.search).get("conf")) S.guardConf = true;
     openSheet(true);
     const f = new URLSearchParams(location.search).get("focus");
     if (f) setTimeout(() => {

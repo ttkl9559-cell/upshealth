@@ -65,27 +65,49 @@ class CmdRecorder:
 # ======================================================================
 print("\n1. 纯决策函数 guard_verdict")
 # ======================================================================
-CFG = {"guard_enabled": True, "guard_low_pct": 25, "guard_crit_pct": 10,
-       "guard_grace_s": 180, "guard_min_ob_s": 60}
+CFG = {"guard_enabled": True, "guard_time_min": 10, "guard_low_pct": 20,
+       "guard_grace_s": 60, "guard_min_ob_s": 30}
 
 st, act, _ = server.guard_verdict(20, True, 300, "idle", {"guard_enabled": False})
 check("未启用时永远是 idle", st == "idle" and act in (None, "reset"), st)
 
-st, act, _ = server.guard_verdict(20, True, 30, "idle", CFG)
-check("电池上不足 60 秒不认（防切换抖动）", st == "watching" and act is None, st)
+st, act, _ = server.guard_verdict(20, True, 20, "idle", CFG)
+check("电池上不足确认期不认（防切换抖动）", st == "watching" and act is None, st)
 
-st, act, _ = server.guard_verdict(40, True, 300, "idle", CFG)
-check("电量高于触发线只观察", st == "watching" and act is None, (st, act))
+st, act, _ = server.guard_verdict(80, True, 300, "idle", CFG)
+check("两条判据都没到，只观察", st == "watching" and act is None, (st, act))
 
-st, act, _ = server.guard_verdict(25, True, 300, "idle", CFG)
-check("电量正好等于触发线即进入待执行", st == "armed" and act == "arm", (st, act))
+# ---- 判据一：断电时长 ----
+st, act, _ = server.guard_verdict(100, True, 600, "idle", CFG)
+check("电量满格但断电满 10 分钟 → 触发（时间判据）",
+      st == "armed" and act == "arm", (st, act))
 
-st, act, _ = server.guard_verdict(24.9, True, 300, "idle", CFG)
-check("略低于触发线也进入待执行", st == "armed" and act == "arm", (st, act))
+st, act, _ = server.guard_verdict(100, True, 599, "idle", CFG)
+check("断电 599 秒差一秒不触发", st == "watching" and act is None, (st, act))
+
+st, act, _ = server.guard_verdict(None, True, 600, "idle", CFG)
+check("电量读不到时，时间判据照样能关机",
+      st == "armed" and act == "arm", (st, act))
 
 st, act, _ = server.guard_verdict(None, True, 300, "idle", CFG)
-check("电量读不到时不动作", st == "unknown" and act is None, st)
+check("电量读不到且时间没到 → 观察，不瞎判",
+      st == "watching" and act is None, st)
 
+# ---- 判据二：剩余电量 ----
+st, act, _ = server.guard_verdict(20, True, 300, "idle", CFG)
+check("电量正好等于阈值即触发", st == "armed" and act == "arm", (st, act))
+
+st, act, _ = server.guard_verdict(19.9, True, 300, "idle", CFG)
+check("略低于阈值也触发", st == "armed" and act == "arm", (st, act))
+
+st, act, _ = server.guard_verdict(20.1, True, 300, "idle", CFG)
+check("略高于阈值不触发", st == "watching" and act is None, (st, act))
+
+st, act, _ = server.guard_verdict(10, True, 600, "idle", CFG)
+check("两条同时满足也能正常触发",
+      st == "armed" and act == "arm", (st, act))
+
+# ---- 状态保持 ----
 st, act, _ = server.guard_verdict(20, False, 0, "armed", CFG)
 check("待执行中来电 → cancel", st == "idle" and act == "cancel", (st, act))
 
@@ -94,6 +116,20 @@ check("已待执行时电量回升也不退出（防抖）", st == "armed" and a
 
 st, act, _ = server.guard_verdict(5, True, 600, "alerted", CFG)
 check("已告警状态保持，不重复进倒计时", st == "alerted" and act is None, (st, act))
+
+# ---- 说明文字要能直接给人看 ----
+st, act, note = server.guard_verdict(100, True, 660, "idle", CFG)
+check("时间触发时说明里带出断电时长", "11 分" in note, note)
+
+st, act, note = server.guard_verdict(15, True, 300, "idle", CFG)
+check("电量触发时说明里带出电量", "15%" in note, note)
+
+check("guard_dur 分钟不带多余的 0 秒", server.guard_dur(600) == "10 分钟",
+      server.guard_dur(600))
+check("guard_dur 不足一分钟按秒", server.guard_dur(45) == "45 秒",
+      server.guard_dur(45))
+check("guard_dur 带余数", server.guard_dur(630) == "10 分 30 秒",
+      server.guard_dur(630))
 
 # ======================================================================
 print("\n2. 状态机：启动静默期")
@@ -130,7 +166,7 @@ g.cancel_until = 0
 g.fired_at = None
 g.evaluate(mk_snap(20))
 check("电量 20% 进入待执行", g.state == "armed", g.state)
-check("宽限期 = 180 秒", g.deadline and g.deadline - g.armed_at == 180, g.deadline)
+check("宽限期 = 60 秒", g.deadline and g.deadline - g.armed_at == 60, g.deadline)
 check("记录了 GUARD_ARMED", "GUARD_ARMED" in ev_types(), ev_types()[-3:])
 check("此时还没有下发命令", not CmdRecorder.calls, CmdRecorder.calls)
 
@@ -138,11 +174,11 @@ check("此时还没有下发命令", not CmdRecorder.calls, CmdRecorder.calls)
 g.evaluate(mk_snap(20))
 check("宽限期内不执行", not CmdRecorder.calls and g.state == "armed", g.state)
 
-# 电量掉到紧急线 → 宽限压缩到 30 秒
+# 电量掉到硬下限 → 不再等宽限期
 old = g.deadline
-g.evaluate(mk_snap(8))
-check("紧急线把宽限压缩到 30 秒内", g.deadline - int(time.time()) <= 31, g.deadline - time.time())
-check("紧急线压缩确实生效（比原来近）", g.deadline < old, (g.deadline, old))
+g.evaluate(mk_snap(4))
+check("硬下限把宽限压缩到 30 秒内", g.deadline - int(time.time()) <= 31, g.deadline - time.time())
+check("硬下限压缩确实生效（比原来近）", g.deadline < old, (g.deadline, old))
 
 # 时间到
 g.deadline = int(time.time()) - 1
@@ -164,6 +200,36 @@ check("写了上次关机记录", bool(g.last_fire) and "fired_at" in (g.last_fi
 CmdRecorder.reset()
 g.evaluate(mk_snap(5))
 check("已执行后不再重复下发", not CmdRecorder.calls, CmdRecorder.calls)
+
+# ======================================================================
+print("\n3b. 时间判据：断电很久但电量还满，也必须关机")
+# ======================================================================
+clear_events()
+CmdRecorder.reset()
+g.boot_at = int(time.time()) - 1000
+g.state = "idle"
+g.deadline = None
+g.alert_level = 0
+g.cancel_until = 0
+g.fired_at = None
+g.ob_since = int(time.time()) - 599        # 断电 599 秒，还差 1 秒到 10 分钟
+g.evaluate(mk_snap(100))
+check("断电 599 秒、电量 100% 仍在观察", g.state == "watching", g.state)
+
+g.ob_since = int(time.time()) - 601        # 跨过 10 分钟
+g.evaluate(mk_snap(100))
+check("断电满 10 分钟 → 即使电量 100% 也进入待执行", g.state == "armed", g.state)
+check("触发原因写的是断电时长", "断电" in (g.note or ""), g.note)
+
+g.deadline = int(time.time()) - 1
+real_sleep = time.sleep
+time.sleep = lambda s: None
+try:
+    g.evaluate(mk_snap(100))               # 电量满格，复核必须认时间判据
+finally:
+    time.sleep = real_sleep
+check("复核时电量满格不会挡下时间判据", len(CmdRecorder.calls) == 1, CmdRecorder.calls)
+g.state = "fired"
 
 # ======================================================================
 print("\n4. 落地前的复核（这几条决定会不会误关机）")
@@ -384,28 +450,31 @@ class FakeHandler:
         return self.out
 
 
-server.CFG["guard_low_pct"] = 25
-server.CFG["guard_crit_pct"] = 10
+server.CFG["guard_time_min"] = 10
+server.CFG["guard_low_pct"] = 20
 server.CFG["guard_enabled"] = False
 server.CFG["guard_mode"] = "notify"
 
-h = FakeHandler({"guard_low_pct": 10, "guard_crit_pct": 20})
+h = FakeHandler({"guard_low_pct": 3})
 server.Handler._api_guard_save(h)
-check("紧急线 ≥ 触发线被拒绝", h.code == 400, h.out)
-check("被拒后触发线没被改坏", server.CFG["guard_low_pct"] == 25,
+check("电量阈值低于硬下限被拒绝", h.code == 400, h.out)
+check("被拒后电量阈值没被改坏", server.CFG["guard_low_pct"] == 20,
       server.CFG["guard_low_pct"])
-check("被拒后紧急线没被改坏", server.CFG["guard_crit_pct"] == 10,
-      server.CFG["guard_crit_pct"])
+check("被拒后断电时长没被改坏", server.CFG["guard_time_min"] == 10,
+      server.CFG["guard_time_min"])
 
 h = FakeHandler({"guard_mode": "whatever"})
 server.Handler._api_guard_save(h)
 check("非法模式被拒绝", h.code == 400, h.out)
 check("被拒后模式没变", server.CFG["guard_mode"] == "notify", server.CFG["guard_mode"])
 
-h = FakeHandler({"guard_mode": "shutdown", "guard_low_pct": 22})
+h = FakeHandler({"guard_mode": "shutdown", "guard_low_pct": 22, "guard_time_min": 15})
 server.Handler._api_guard_save(h)
 check("合法保存能生效", h.code == 200 and server.CFG["guard_mode"] == "shutdown", h.code)
-check("合法保存写入新阈值", server.CFG["guard_low_pct"] == 22, server.CFG["guard_low_pct"])
+check("合法保存写入新电量阈值", server.CFG["guard_low_pct"] == 22,
+      server.CFG["guard_low_pct"])
+check("合法保存写入新断电时长", server.CFG["guard_time_min"] == 15,
+      server.CFG["guard_time_min"])
 check("保存后状态机被重置", server.GUARD.state == "idle", server.GUARD.state)
 
 # ======================================================================

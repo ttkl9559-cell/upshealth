@@ -45,7 +45,7 @@ from html import unescape
 
 APP_NAME = "upshealth"
 APP_CN = "UPS 健康"
-FALLBACK_VERSION = "1.3.0"
+FALLBACK_VERSION = "1.3.1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.environ.get("TRIM_APPDEST") or os.path.dirname(HERE)
@@ -279,10 +279,11 @@ DEFAULT_CFG = {
     # 默认全关。断电后要不要自动关机，只能由你自己决定，我们绝不默认替做。
     "guard_enabled": False,
     "guard_mode": "notify",      # notify = 只告警不动作；shutdown = 真的关机
-    "guard_low_pct": 25,         # 电量降到该值开始倒计时
-    "guard_crit_pct": 10,        # 降到该值把宽限期压缩到 30 秒
-    "guard_grace_s": 180,        # 宽限期，秒；期间来电或点取消都能中止
-    "guard_min_ob_s": 60,        # 必须在电池上连续多少秒才认（防切换抖动误判）
+    # 两条独立判据，任一满足即触发，谁先到算谁
+    "guard_time_min": 10,        # ① 市电断开持续多少分钟仍未恢复
+    "guard_low_pct": 20,         # ② UPS 电量剩余低于多少 %
+    "guard_grace_s": 60,         # 触发后再等多少秒才真关机（留取消的余地）
+    "guard_min_ob_s": 30,        # 必须在电池上连续多少秒才认（防切换抖动误判）
     "guard_boot_hold_s": 300,    # 服务启动后多少秒内不动手（防重启循环关机）
     "guard_allow_conflict": False,  # 明知飞牛也管着 UPS 仍要启用（高危，默认否）
 }
@@ -1506,10 +1507,33 @@ def guard_conflicts():
 #   · 真正下发前再复核一次快照新鲜度和电量
 #   · 只关 NAS（shutdown），绝不下 load.off 断 UPS 输出 —— 那样来电也无法自启
 # ======================================================================
+GUARD_HARD_FLOOR = 5.0   # 电量硬下限：低于此值不再等宽限期，立刻执行
+
+
+def guard_dur(sec):
+    """秒 → 10 分钟 / 1 分 30 秒，用于关机判定的说明文字。"""
+    try:
+        sec = int(max(0, sec))
+    except Exception:
+        return "—"
+    if sec < 60:
+        return "%d 秒" % sec
+    if sec < 3600:
+        m, s = sec // 60, sec % 60
+        return ("%d 分 %d 秒" % (m, s)) if s else ("%d 分钟" % m)
+    h, m = sec // 3600, (sec % 3600) // 60
+    return ("%d 小时 %d 分" % (h, m)) if m else ("%d 小时" % h)
+
+
 def guard_verdict(chg, on_batt, ob_for, cur_state, cfg):
     """纯函数决策，方便单测。返回 (新状态, 动作, 说明)。
 
     动作：None | 'reset' | 'cancel' | 'arm'
+
+    两条判据互相独立，任一满足即触发，谁先到算谁：
+      ① 市电断开后持续 >= guard_time_min 分钟仍未恢复
+      ② UPS 电量剩余 <= guard_low_pct
+    时间判据不依赖电量读数 —— 电量读不到时仍然能按时间关机。
     """
     if not cfg.get("guard_enabled"):
         return ("idle", "reset" if cur_state != "idle" else None, "关机保护未启用")
@@ -1524,19 +1548,26 @@ def guard_verdict(chg, on_batt, ob_for, cur_state, cfg):
     if cur_state in ("armed", "alerted"):
         return (cur_state, None, "")
 
-    low = float(cfg.get("guard_low_pct") or 25)
-    need = float(cfg.get("guard_min_ob_s") or 60)
-
-    if chg is None or chg <= 0:
-        return ("unknown", None, "电量读数不可用，不做判断")
+    need = float(cfg.get("guard_min_ob_s") or 30)
+    tmin = float(cfg.get("guard_time_min") or 10)
+    low = float(cfg.get("guard_low_pct") or 20)
 
     if ob_for < need:
         return ("watching", None, "电池供电 %d 秒，未满 %d 秒确认期" % (ob_for, need))
 
-    if chg > low:
-        return ("watching", None, "")
+    has_chg = (chg is not None and chg > 0)
+    hit_t = ob_for >= tmin * 60
+    hit_p = has_chg and chg <= low
 
-    return ("armed", "arm", "电量 %.0f%% 已到触发线 %.0f%%" % (chg, low))
+    if hit_t and hit_p:
+        return ("armed", "arm", "断电已 %s、电量 %.0f%%，两条判据都到"
+                % (guard_dur(ob_for), chg))
+    if hit_t:
+        return ("armed", "arm", "断电已持续 %s，超过 %s 上限"
+                % (guard_dur(ob_for), guard_dur(tmin * 60)))
+    if hit_p:
+        return ("armed", "arm", "电量 %.0f%% 已降到 %.0f%% 以下" % (chg, low))
+    return ("watching", None, "")
 
 
 class ShutdownGuard(object):
@@ -1627,20 +1658,26 @@ class ShutdownGuard(object):
         if self.state == "armed" and self.deadline:
             left = max(0, int(self.deadline - now))
         hold = max(0, int(self.boot_at + int(CFG.get("guard_boot_hold_s") or 300) - now))
+        tmin = float(CFG.get("guard_time_min") or 10)
+        ob_for = (now - self.ob_since) if self.ob_since else 0
+        # 断电还要多久才到时间上限；没断电时为 None
+        time_left = max(0, int(tmin * 60 - ob_for)) if self.ob_since else None
         return {
             "enabled": bool(CFG.get("guard_enabled")),
             "mode": (CFG.get("guard_mode") or "notify").lower(),
+            "time_min": CFG.get("guard_time_min"),
             "low_pct": CFG.get("guard_low_pct"),
-            "crit_pct": CFG.get("guard_crit_pct"),
             "grace_s": CFG.get("guard_grace_s"),
             "min_ob_s": CFG.get("guard_min_ob_s"),
+            "hard_floor": GUARD_HARD_FLOOR,
             "boot_hold_s": CFG.get("guard_boot_hold_s"),
             "allow_conflict": bool(CFG.get("guard_allow_conflict")),
             "state": self.state,
             "state_cn": GUARD_STATE_CN.get(self.state, self.state),
             "state_since": self.state_since,
             "note": self.note,
-            "on_batt_s": (now - self.ob_since) if self.ob_since else 0,
+            "on_batt_s": ob_for,
+            "time_left_s": time_left,
             "left_s": left,
             "deadline": self.deadline,
             "boot_hold_left": hold,
@@ -1679,14 +1716,18 @@ class ShutdownGuard(object):
             "temp": live.get("temp"), "note": note, "no_push": no_push,
         })
 
-    def _arm(self, chg, ob_for, snap):
-        grace = max(10, int(CFG.get("guard_grace_s") or 180))
+    def _arm(self, chg, ob_for, snap, why=""):
+        """why 是触发原因（断电超时 / 电量见底），要原样带给用户看。"""
+        grace = max(10, int(CFG.get("guard_grace_s") or 60))
         self.armed_at = int(time.time())
         self.deadline = self.armed_at + grace
-        self._set("armed", "电量 %.0f%%，%d 秒后执行" % (chg, grace))
+        reason = why or ("电量 %.0f%%" % (chg or 0))
+        # note 只放「为什么触发」，剩下的秒数由前端按本地时钟自己算，
+        # 免得界面上出现两个互相打架的倒计时
+        self._set("armed", reason)
         self._event("GUARD_ARMED", snap,
-                    "电量 %.0f%%、电池供电 %d 秒，进入 %d 秒宽限期；"
-                    "期间来电或手动取消都会中止" % (chg, ob_for, grace))
+                    "%s、电池供电 %s，进入 %d 秒宽限期；"
+                    "期间来电或手动取消都会中止" % (reason, guard_dur(ob_for), grace))
 
     def _cancel(self, why, snap):
         had = self.state
@@ -1698,8 +1739,8 @@ class ShutdownGuard(object):
             self._event("GUARD_CANCEL", snap, why)
 
     def _want_level(self, chg):
-        crit = float(CFG.get("guard_crit_pct") or 10)
-        return 2 if (chg is not None and chg <= crit) else 1
+        """1 = 已触发；2 = 电量已到硬下限，不再等宽限期。"""
+        return 2 if (chg is not None and 0 < chg <= GUARD_HARD_FLOOR) else 1
 
     def _resolve_cmd(self):
         if self.override_cmd:
@@ -1784,7 +1825,7 @@ class ShutdownGuard(object):
                 self._reset(note)
                 return True
             if act == "arm":
-                self._arm(chg or 0, ob_for, snap)
+                self._arm(chg or 0, ob_for, snap, note)
                 return True
             if st != self.state and act is None:
                 self._set(st, note)
@@ -1804,13 +1845,13 @@ class ShutdownGuard(object):
             if not self.deadline:
                 return False
 
-            # 电量掉到紧急线 → 压缩宽限期
-            crit = float(CFG.get("guard_crit_pct") or 10)
-            if chg is not None and chg <= crit:
+            # 电量掉到硬下限 → 不再等宽限期
+            if chg is not None and 0 < chg <= GUARD_HARD_FLOOR:
                 tight = min(self.deadline, now + 30)
                 if tight < self.deadline:
                     self.deadline = tight
-                    log("电量 %.0f%% 已到紧急线 %.0f%%，宽限期压缩到 30 秒" % (chg, crit))
+                    log("电量 %.0f%% 已到硬下限 %.0f%%，宽限期压缩到 30 秒"
+                        % (chg, GUARD_HARD_FLOOR))
 
             if now >= self.deadline:
                 self._fire(snap)
@@ -1831,10 +1872,14 @@ class ShutdownGuard(object):
                 self._cancel("复核时市电已恢复", snap)
                 return
             chg = live.get("chg")
-            low = float(CFG.get("guard_low_pct") or 25)
-            if chg is None or chg <= 0 or chg > low:
-                log("关机保护：复核电量 %s%%，高于触发线，放弃"
-                    % ("?" if chg is None else "%.0f" % chg), "warn")
+            low = float(CFG.get("guard_low_pct") or 20)
+            tmin = float(CFG.get("guard_time_min") or 10)
+            ob_for = now - (self.ob_since or now)
+            has_chg = (chg is not None and chg > 0)
+            # 两条判据任一仍成立就继续 —— 这是触发条件，不是"额外确认"
+            if not ((has_chg and chg <= low) or ob_for >= tmin * 60):
+                log("关机保护：复核时断电 %s、电量 %s%%，两条判据都不成立了，放弃"
+                    % (guard_dur(ob_for), ("%.0f" % chg) if has_chg else "?"), "warn")
                 return
 
         chg = live.get("chg")
@@ -3090,8 +3135,8 @@ class Handler(BaseHTTPRequestHandler):
                 if m not in ("notify", "shutdown"):
                     return self._err(400, "guard_mode 只能是 notify 或 shutdown")
                 new["guard_mode"] = m
-            new["guard_low_pct"] = num("guard_low_pct", 5, 90)
-            new["guard_crit_pct"] = num("guard_crit_pct", 1, 89)
+            new["guard_time_min"] = int(num("guard_time_min", 1, 180))
+            new["guard_low_pct"] = int(num("guard_low_pct", 5, 95))
             new["guard_grace_s"] = int(num("guard_grace_s", 10, 3600))
             new["guard_min_ob_s"] = int(num("guard_min_ob_s", 10, 3600))
             new["guard_boot_hold_s"] = int(num("guard_boot_hold_s", 0, 3600))
@@ -3100,9 +3145,9 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as e:
             return self._err(400, str(e))
 
-        if new["guard_crit_pct"] >= new["guard_low_pct"]:
-            return self._err(400, "紧急线必须低于触发线（%s ≥ %s）"
-                             % (new["guard_crit_pct"], new["guard_low_pct"]))
+        if new["guard_low_pct"] <= GUARD_HARD_FLOOR:
+            return self._err(400, "电量阈值必须高于硬下限 %.0f%%（低于它就没时间关机了）"
+                             % GUARD_HARD_FLOOR)
 
         merged = dict(CFG)
         merged.update(new)
@@ -3130,8 +3175,9 @@ class Handler(BaseHTTPRequestHandler):
             GUARD.cancel_until = 0
             GUARD.boot_at = int(time.time())
             GUARD._reset("配置已更新")
-            log("关机保护配置：启用=%s 模式=%s 触发=%s%% 宽限=%ss"
+            log("关机保护配置：启用=%s 模式=%s 断电%s后关机 / 电量低于%s%%关机 / 宽限%ss"
                 % (CFG["guard_enabled"], CFG["guard_mode"],
+                   guard_dur(float(CFG["guard_time_min"]) * 60),
                    CFG["guard_low_pct"], CFG["guard_grace_s"]))
 
         out = GUARD.status()
@@ -3149,20 +3195,20 @@ class Handler(BaseHTTPRequestHandler):
         """演练：把纯决策函数按电量下降曲线跑一遍，不碰真实状态、绝不关机。"""
         body = self._body()
         try:
-            start = float(body.get("start_charge") or 40)
-            drop = float(body.get("drop") or 5)
-            steps = int(body.get("steps") or 14)
+            start = float(body.get("start_charge") or 100)
+            drop = float(body.get("drop") or 4)
+            steps = int(body.get("steps") or 25)
             step_s = int(body.get("step_s") or 60)
         except Exception:
             return self._err(400, "参数必须是数字")
-        steps = max(2, min(40, steps))
+        steps = max(2, min(60, steps))
         step_s = max(10, min(600, step_s))
         start = max(1.0, min(100.0, start))
         drop = max(0.5, min(50.0, drop))
 
         cfg = dict(CFG)
         cfg["guard_enabled"] = True
-        for k in ("guard_low_pct", "guard_crit_pct", "guard_grace_s", "guard_min_ob_s"):
+        for k in ("guard_time_min", "guard_low_pct", "guard_grace_s", "guard_min_ob_s"):
             if k in body:
                 try:
                     cfg[k] = float(body[k])
