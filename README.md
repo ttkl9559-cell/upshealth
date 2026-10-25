@@ -27,6 +27,18 @@
 
 ---
 
+## 预览
+
+| 总览（浅色） | 总览（深色） |
+|---|---|
+| ![总览 浅色](docs/overview-light.png) | ![总览 深色](docs/overview-dark.png) |
+
+![原始变量](docs/vars-light.png)
+
+界面沿用 fnmonitor 的设计语言：26 / 14 圆角、点阵数字、九档状态色，浅色深色都跟手。
+
+---
+
 ## 功能
 
 ### 总览
@@ -143,6 +155,16 @@ python build_fpk.py --both     # 两个都构建
 ```
 
 产物在 `dist/`，同时生成 `.sha256` 供内置更新校验。打包脚本纯 Python，不依赖 `tar`/`md5sum` 等平台工具，Windows 上也能直接跑出能被飞牛接受的包。
+
+自检（CI 会跑，本地也能跑）：
+
+```bash
+python tools/namelint.py app/server.py   # 未定义全局名，抓 NameError 隐患
+python tools/detect_test.py              # 用伪造读数走遍所有状态分支
+python tools/layout_test.py              # 模拟 fpk 真实布局做冒烟
+```
+
+`detect_test.py` 是刻意加的：有些分支（例如状态位跳变）只在特定条件下执行，编译期和肉眼都发现不了。它把每个分支都强制走一遍。
 
 打 tag 推送即自动构建并发布 Release：
 

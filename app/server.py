@@ -199,6 +199,14 @@ STATUS_BITS = [
 ]
 BIT_OL, BIT_OB, BIT_LB, BIT_RB, BIT_CHRG, BIT_DISCHRG, BIT_ALARM, BIT_FSD = (
     1, 2, 4, 8, 16, 32, 64, 8192)
+# 从 STATUS_BITS 直接派生，避免上面那张表改了这里忘了改
+_BIT = {n: b for n, _lbl, b in STATUS_BITS}
+BIT_OVER = _BIT["OVER"]
+BIT_BYPASS = _BIT["BYPASS"]
+BIT_CAL = _BIT["CAL"]
+BIT_OFF = _BIT["OFF"]
+BIT_TRIM = _BIT["TRIM"]
+BIT_BOOST = _BIT["BOOST"]
 
 RES_LABEL = {0: "10 秒", 1: "1 分钟", 2: "10 分钟"}
 

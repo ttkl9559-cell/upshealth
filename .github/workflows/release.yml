@@ -24,6 +24,15 @@ jobs:
       - name: Show version
         run: grep -n 'FALLBACK_VERSION' app/server.py
 
+      - name: Sanity checks
+        run: |
+          echo "--- 未定义全局名（NameError 隐患）"
+          python tools/namelint.py app/server.py build_fpk.py
+          echo "--- 事件检测分支全覆盖"
+          python tools/detect_test.py
+          echo "--- fpk 真实布局冒烟"
+          python tools/layout_test.py
+
       - name: Build fpk (x86_64 + arm64)
         run: python build_fpk.py --both
 

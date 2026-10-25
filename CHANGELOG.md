@@ -21,6 +21,7 @@
 - 写操作双重 CSRF 门（`Content-Type: application/json` + `X-UPS-Request: 1`）
 - 静态目录自动识别 `<app>/www` 与 `<app>/server/www` 两种布局，调试态与 fpk 安装态共用一套代码
 - 更新时 `sha256` 附件与选中的 fpk 严格同名匹配，多架构 Release 下不会串包
+- 附带三个自检脚本（未定义全局名扫描 / 事件分支全覆盖 / fpk 真实布局冒烟），CI 每次构建前强制跑
 - 打包脚本纯 Python 实现，Windows 下也能产出飞牛可接受的 fpk（不依赖 `tar` / `md5sum`）
 - UI 遵循 fnmonitor 设计 token（画布 `#ECECEA`/`#000000`、磁贴 `#FFFFFF`/`#161616`、圆角 26/14、状态色 ok/warn/crit）
 
